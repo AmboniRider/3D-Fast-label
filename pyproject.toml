@@ -8,6 +8,6 @@ dependencies = [
     "mapbox-earcut>=1.0.2",
     "numpy>=2.0.0",
     "pillow>=11.0.0",
-    "shapely>=2.0.6",
+    "shapely>=2.1.0",
     "trimesh>=4.5.0",
 ]

@@ -5,7 +5,6 @@ Interfaccia grafica desktop (Tkinter) per il generatore di etichette 3D.
 from __future__ import annotations
 
 import csv
-import os
 import threading
 import tkinter as tk
 from pathlib import Path
@@ -20,31 +19,38 @@ class TagApp(tk.Tk):
     def __init__(self) -> None:
         super().__init__()
         self.title("Generatore Targhette 3D (.3MF / .STL)")
-        self.geometry("1020x700")
-        self.minsize(900, 620)
+        self.geometry("1080x740")
+        self.minsize(960, 650)
 
         self.fonts = tg.discover_system_fonts()
         default_font = tg.pick_default_font(self.fonts)
 
+        self._model_specs = list(tg.MODEL_SPECS.values())
+        self._spec_by_display = {s.display_name: s for s in self._model_specs}
+        init_spec = tg.get_model_spec(tg.DEFAULT_MODEL_ID)
+
         self.custom_font_path: str | None = None
-        self.base_color = tg.DEFAULT_BASE_COLOR
-        self.text_color = tg.DEFAULT_TEXT_COLOR
+        self.base_color = init_spec.default_base_color
+        self.text_color = init_spec.default_text_color
+        self._colors_customized = False
         self.current_layout: tg.TagLayout | None = None
         self._preview_after_id: str | None = None
         self._preview_photo: ImageTk.PhotoImage | None = None
         self._batch_running = False
 
+        self.var_model_name = tk.StringVar(value=init_spec.display_name)
+        self.var_relief_mode = tk.StringVar(value=init_spec.default_relief_mode)
+        self.var_align = tk.StringVar(value="center")
+        self.var_include_border = tk.BooleanVar(value=True)
         self.var_font_name = tk.StringVar(value=default_font.display_name if default_font else "")
         self.var_wrap_mode = tk.StringVar(value="auto")
-        self.var_width = tk.DoubleVar(value=tg.DEFAULT_WIDTH_MM)
-        self.var_height = tk.DoubleVar(value=tg.DEFAULT_HEIGHT_MM)
+        self.var_width = tk.DoubleVar(value=init_spec.default_width_mm)
+        self.var_height = tk.DoubleVar(value=init_spec.default_height_mm)
         self.var_margin = tk.DoubleVar(value=tg.DEFAULT_MARGIN_MM)
         self.var_show_usable = tk.BooleanVar(value=True)
         self.var_status = tk.StringVar(value="Pronto")
         self.var_metrics = tk.StringVar(value="")
-        self.var_specs = tk.StringVar(
-            value=f"Dimensioni: {tg.DEFAULT_HEIGHT_MM:.1f} x {tg.DEFAULT_WIDTH_MM:.1f} mm | Base: 1.0 mm | Testo a filo: 0.6 mm (face-down)"
-        )
+        self.var_specs = tk.StringVar(value="")
 
         # Variabili batch
         default_out = str(Path.cwd() / "output_targhette")
@@ -53,11 +59,18 @@ class TagApp(tk.Tk):
         self.var_batch_stl = tk.BooleanVar(value=False)
 
         self._build_ui()
+        self._sync_model_constraints(reset_dims=True, reset_colors=False, reset_relief=True)
         self._schedule_preview()
 
+    def _active_spec(self) -> tg.ModelSpec:
+        return self._spec_by_display.get(
+            self.var_model_name.get(),
+            tg.get_model_spec(tg.DEFAULT_MODEL_ID),
+        )
+
     def _build_ui(self) -> None:
-        self.columnconfigure(0, weight=1, minsize=470)
-        self.columnconfigure(1, weight=1, minsize=380)
+        self.columnconfigure(0, weight=1, minsize=510)
+        self.columnconfigure(1, weight=1, minsize=400)
         self.rowconfigure(0, weight=1)
 
         left = ttk.Frame(self, padding=12)
@@ -76,7 +89,7 @@ class TagApp(tk.Tk):
         self._build_single_tab(tab_single)
         self._build_batch_tab(tab_batch)
 
-        # Barra impostazioni comuni (Font, Colori, Margine)
+        # Barra impostazioni comuni
         common = ttk.LabelFrame(left, text="Stile e Parametri Modello", padding=10)
         common.grid(row=1, column=0, sticky="ew", pady=(10, 0))
         self._build_common_settings(common)
@@ -104,6 +117,8 @@ class TagApp(tk.Tk):
             foreground="#666666",
             font=("Segoe UI", 8),
             anchor="center",
+            justify="center",
+            wraplength=460,
         )
         spec_lbl.grid(row=2, column=0, sticky="ew", pady=(2, 0))
 
@@ -119,20 +134,36 @@ class TagApp(tk.Tk):
         self.txt_single.bind("<KeyRelease>", lambda _e: self._schedule_preview())
 
         wrap_frame = ttk.Frame(parent)
-        wrap_frame.grid(row=2, column=0, sticky="ew", pady=(0, 12))
-        ttk.Label(wrap_frame, text="Adattamento testo:").pack(side="left")
+        wrap_frame.grid(row=2, column=0, sticky="ew", pady=(0, 10))
+        ttk.Label(wrap_frame, text="Adattamento:").pack(side="left")
         ttk.Radiobutton(
             wrap_frame,
             text="Auto (a capo se lungo)",
             variable=self.var_wrap_mode,
             value="auto",
             command=self._schedule_preview,
-        ).pack(side="left", padx=(10, 8))
+        ).pack(side="left", padx=(8, 8))
         ttk.Radiobutton(
             wrap_frame,
             text="Riga singola",
             variable=self.var_wrap_mode,
             value="single",
+            command=self._schedule_preview,
+        ).pack(side="left", padx=(0, 14))
+
+        ttk.Label(wrap_frame, text="Allinea:").pack(side="left")
+        ttk.Radiobutton(
+            wrap_frame,
+            text="Centro",
+            variable=self.var_align,
+            value="center",
+            command=self._schedule_preview,
+        ).pack(side="left", padx=(6, 6))
+        ttk.Radiobutton(
+            wrap_frame,
+            text="Sinistra",
+            variable=self.var_align,
+            value="left",
             command=self._schedule_preview,
         ).pack(side="left")
 
@@ -197,24 +228,56 @@ class TagApp(tk.Tk):
     def _build_common_settings(self, parent: ttk.LabelFrame) -> None:
         parent.columnconfigure(1, weight=1)
 
+        # Selezione modello
+        ttk.Label(parent, text="Modello:").grid(row=0, column=0, sticky="w", pady=3)
+        model_names = [s.display_name for s in self._model_specs]
+        self.cmb_model = ttk.Combobox(parent, textvariable=self.var_model_name, values=model_names, state="readonly")
+        self.cmb_model.grid(row=0, column=1, columnspan=2, sticky="ew", padx=(8, 0), pady=3)
+        self.cmb_model.bind("<<ComboboxSelected>>", self._on_model_changed)
+
+        # Tipo testo: A filo vs In rilievo
+        ttk.Label(parent, text="Stile testo:").grid(row=1, column=0, sticky="w", pady=3)
+        rel_frame = ttk.Frame(parent)
+        rel_frame.grid(row=1, column=1, columnspan=2, sticky="w", padx=(8, 0), pady=3)
+        ttk.Radiobutton(
+            rel_frame,
+            text="A filo (0.4–1.0 mm, face-down)",
+            variable=self.var_relief_mode,
+            value="flush",
+            command=self._schedule_preview,
+        ).pack(side="left", padx=(0, 10))
+        ttk.Radiobutton(
+            rel_frame,
+            text="In rilievo (1.0–1.6 mm)",
+            variable=self.var_relief_mode,
+            value="raised",
+            command=self._schedule_preview,
+        ).pack(side="left")
+        self.chk_border = ttk.Checkbutton(
+            rel_frame,
+            text="Bordino 1 mm",
+            variable=self.var_include_border,
+            command=self._schedule_preview,
+        )
+
         # Font selector
-        ttk.Label(parent, text="Font:").grid(row=0, column=0, sticky="w", pady=3)
+        ttk.Label(parent, text="Font:").grid(row=2, column=0, sticky="w", pady=3)
         font_names = [f.display_name for f in self.fonts]
         self.cmb_font = ttk.Combobox(parent, textvariable=self.var_font_name, values=font_names, state="readonly")
-        self.cmb_font.grid(row=0, column=1, sticky="ew", padx=(8, 6), pady=3)
+        self.cmb_font.grid(row=2, column=1, sticky="ew", padx=(8, 6), pady=3)
         self.cmb_font.bind("<<ComboboxSelected>>", self._on_system_font_selected)
-        ttk.Button(parent, text="File .ttf/.otf...", command=self._browse_custom_font).grid(row=0, column=2, pady=3)
+        ttk.Button(parent, text="File .ttf/.otf...", command=self._browse_custom_font).grid(row=2, column=2, pady=3)
 
         # Colori
-        ttk.Label(parent, text="Colori 3MF:").grid(row=1, column=0, sticky="w", pady=4)
+        ttk.Label(parent, text="Colori 3MF:").grid(row=3, column=0, sticky="w", pady=4)
         col_frame = ttk.Frame(parent)
-        col_frame.grid(row=1, column=1, columnspan=2, sticky="w", padx=(8, 0), pady=4)
+        col_frame.grid(row=3, column=1, columnspan=2, sticky="w", padx=(8, 0), pady=4)
 
         self.btn_base_col = tk.Button(
             col_frame,
             text=f" Base {self.base_color} ",
             bg=self.base_color,
-            fg="#FFFFFF",
+            fg=self._contrast_fg(self.base_color),
             relief="groove",
             command=self._pick_base_color,
         )
@@ -224,7 +287,7 @@ class TagApp(tk.Tk):
             col_frame,
             text=f" Testo {self.text_color} ",
             bg=self.text_color,
-            fg="#111111",
+            fg=self._contrast_fg(self.text_color),
             relief="groove",
             command=self._pick_text_color,
         )
@@ -232,63 +295,95 @@ class TagApp(tk.Tk):
 
         ttk.Button(col_frame, text="Ripristina", command=self._reset_colors).pack(side="left")
 
-        # Dimensioni (Altezza 60-80 mm, Larghezza 20-30 mm)
-        ttk.Label(parent, text="Dimensioni (mm):").grid(row=2, column=0, sticky="w", pady=3)
-        dim_frame = ttk.Frame(parent)
-        dim_frame.grid(row=2, column=1, columnspan=2, sticky="ew", padx=(8, 0), pady=3)
-        dim_frame.columnconfigure(1, weight=1)
-        dim_frame.columnconfigure(4, weight=1)
+        # Dimensioni dinamiche per modello (V/O oppure Diametro singolo per San_P_2)
+        self.lbl_dims = ttk.Label(parent, text="Dimensioni (mm):")
+        self.lbl_dims.grid(row=4, column=0, sticky="w", pady=3)
 
-        ttk.Label(dim_frame, text="V:").grid(row=0, column=0, sticky="w")
-        sc_h = ttk.Scale(
-            dim_frame,
-            from_=tg.MIN_HEIGHT_MM,
-            to=tg.MAX_HEIGHT_MM,
+        self.dim_frame_2d = ttk.Frame(parent)
+        self.dim_frame_2d.grid(row=4, column=1, columnspan=2, sticky="ew", padx=(8, 0), pady=3)
+        self.dim_frame_2d.columnconfigure(1, weight=1)
+        self.dim_frame_2d.columnconfigure(4, weight=1)
+
+        ttk.Label(self.dim_frame_2d, text="V:").grid(row=0, column=0, sticky="w")
+        self.sc_height = ttk.Scale(
+            self.dim_frame_2d,
+            from_=60.0,
+            to=80.0,
             variable=self.var_height,
             command=lambda _v: self._on_dimension_slider(),
         )
-        sc_h.grid(row=0, column=1, sticky="ew", padx=(4, 4))
-        sp_h = ttk.Spinbox(
-            dim_frame,
-            from_=tg.MIN_HEIGHT_MM,
-            to=tg.MAX_HEIGHT_MM,
+        self.sc_height.grid(row=0, column=1, sticky="ew", padx=(4, 4))
+        self.sp_height = ttk.Spinbox(
+            self.dim_frame_2d,
+            from_=60.0,
+            to=80.0,
             increment=0.5,
             textvariable=self.var_height,
             width=5,
             command=self._schedule_preview,
         )
-        sp_h.grid(row=0, column=2, padx=(0, 8))
-        sp_h.bind("<KeyRelease>", lambda _e: self._schedule_preview())
-        sp_h.bind("<FocusOut>", lambda _e: self._clamp_dimensions())
+        self.sp_height.grid(row=0, column=2, padx=(0, 8))
+        self.sp_height.bind("<KeyRelease>", lambda _e: self._schedule_preview())
+        self.sp_height.bind("<FocusOut>", lambda _e: self._clamp_dimensions())
 
-        ttk.Label(dim_frame, text="O:").grid(row=0, column=3, sticky="w")
-        sc_w = ttk.Scale(
-            dim_frame,
-            from_=tg.MIN_WIDTH_MM,
-            to=tg.MAX_WIDTH_MM,
+        ttk.Label(self.dim_frame_2d, text="O:").grid(row=0, column=3, sticky="w")
+        self.sc_width = ttk.Scale(
+            self.dim_frame_2d,
+            from_=20.0,
+            to=30.0,
             variable=self.var_width,
             command=lambda _v: self._on_dimension_slider(),
         )
-        sc_w.grid(row=0, column=4, sticky="ew", padx=(4, 4))
-        sp_w = ttk.Spinbox(
-            dim_frame,
-            from_=tg.MIN_WIDTH_MM,
-            to=tg.MAX_WIDTH_MM,
+        self.sc_width.grid(row=0, column=4, sticky="ew", padx=(4, 4))
+        self.sp_width = ttk.Spinbox(
+            self.dim_frame_2d,
+            from_=20.0,
+            to=30.0,
             increment=0.5,
             textvariable=self.var_width,
             width=5,
             command=self._schedule_preview,
         )
-        sp_w.grid(row=0, column=5, padx=(0, 6))
-        sp_w.bind("<KeyRelease>", lambda _e: self._schedule_preview())
-        sp_w.bind("<FocusOut>", lambda _e: self._clamp_dimensions())
+        self.sp_width.grid(row=0, column=5, padx=(0, 6))
+        self.sp_width.bind("<KeyRelease>", lambda _e: self._schedule_preview())
+        self.sp_width.bind("<FocusOut>", lambda _e: self._clamp_dimensions())
 
-        ttk.Button(dim_frame, text="70x25", width=6, command=self._reset_dimensions).grid(row=0, column=6)
+        self.btn_reset_dims = ttk.Button(self.dim_frame_2d, text="70x25", width=6, command=self._reset_dimensions)
+        self.btn_reset_dims.grid(row=0, column=6)
+
+        # Frame singola dimensione (Diametro) per modelli circolari
+        self.dim_frame_1d = ttk.Frame(parent)
+        self.dim_frame_1d.grid(row=4, column=1, columnspan=2, sticky="ew", padx=(8, 0), pady=3)
+        self.dim_frame_1d.columnconfigure(1, weight=1)
+        ttk.Label(self.dim_frame_1d, text="Ø:").grid(row=0, column=0, sticky="w")
+        self.sc_diam = ttk.Scale(
+            self.dim_frame_1d,
+            from_=30.0,
+            to=40.0,
+            variable=self.var_width,
+            command=lambda _v: self._on_dimension_slider(),
+        )
+        self.sc_diam.grid(row=0, column=1, sticky="ew", padx=(4, 6))
+        self.sp_diam = ttk.Spinbox(
+            self.dim_frame_1d,
+            from_=30.0,
+            to=40.0,
+            increment=0.5,
+            textvariable=self.var_width,
+            width=5,
+            command=self._schedule_preview,
+        )
+        self.sp_diam.grid(row=0, column=2, padx=(0, 6))
+        self.sp_diam.bind("<KeyRelease>", lambda _e: self._schedule_preview())
+        self.sp_diam.bind("<FocusOut>", lambda _e: self._clamp_dimensions())
+        self.btn_reset_diam = ttk.Button(self.dim_frame_1d, text="Ø 35", width=6, command=self._reset_dimensions)
+        self.btn_reset_diam.grid(row=0, column=3)
+        self.dim_frame_1d.grid_remove()
 
         # Margine
-        ttk.Label(parent, text="Margine (mm):").grid(row=3, column=0, sticky="w", pady=3)
+        ttk.Label(parent, text="Margine (mm):").grid(row=5, column=0, sticky="w", pady=3)
         m_frame = ttk.Frame(parent)
-        m_frame.grid(row=3, column=1, columnspan=2, sticky="ew", padx=(8, 0), pady=3)
+        m_frame.grid(row=5, column=1, columnspan=2, sticky="ew", padx=(8, 0), pady=3)
         m_frame.columnconfigure(0, weight=1)
 
         scale = ttk.Scale(
@@ -307,6 +402,59 @@ class TagApp(tk.Tk):
             variable=self.var_show_usable,
             command=self._render_preview_image,
         ).grid(row=0, column=2)
+
+    def _sync_model_constraints(
+        self,
+        reset_dims: bool = True,
+        reset_colors: bool = False,
+        reset_relief: bool = True,
+    ) -> None:
+        spec = self._active_spec()
+        if spec.single_dimension:
+            self.lbl_dims.configure(text="Diametro (mm):")
+            self.dim_frame_2d.grid_remove()
+            self.dim_frame_1d.grid()
+            self.sc_diam.configure(from_=spec.min_width_mm, to=spec.max_width_mm)
+            self.sp_diam.configure(from_=spec.min_width_mm, to=spec.max_width_mm)
+            self.btn_reset_diam.configure(text=f"Ø {int(spec.default_width_mm)}")
+        else:
+            self.lbl_dims.configure(text="Dimensioni (mm):")
+            self.dim_frame_1d.grid_remove()
+            self.dim_frame_2d.grid()
+            self.sc_height.configure(from_=spec.min_height_mm, to=spec.max_height_mm)
+            self.sp_height.configure(from_=spec.min_height_mm, to=spec.max_height_mm)
+            self.sc_width.configure(from_=spec.min_width_mm, to=spec.max_width_mm)
+            self.sp_width.configure(from_=spec.min_width_mm, to=spec.max_width_mm)
+            self.btn_reset_dims.configure(text=f"{int(spec.default_height_mm)}x{int(spec.default_width_mm)}")
+
+        if spec.supports_border:
+            self.chk_border.pack(side="left", padx=(10, 0))
+        else:
+            self.chk_border.pack_forget()
+
+        if reset_dims:
+            self.var_width.set(spec.default_width_mm)
+            self.var_height.set(spec.default_height_mm)
+        if reset_relief:
+            self.var_relief_mode.set(spec.default_relief_mode)
+        if reset_colors or not self._colors_customized:
+            self._apply_color_buttons(spec.default_base_color, spec.default_text_color)
+
+    def _on_model_changed(self, _evt=None) -> None:
+        spec = self._active_spec()
+        cur_txt = self.txt_single.get("1.0", "end-1c").strip()
+        sample_defaults = {"ABUS LUCH.", "Line 1\nLine 2\nLine 3", "Testo"}
+        if cur_txt in sample_defaults:
+            next_sample = {
+                "san_p_0": "ABUS LUCH.",
+                "san_p_1": "Line 1\nLine 2\nLine 3",
+                "san_p_2": "Testo",
+            }.get(spec.model_id, cur_txt)
+            self.txt_single.delete("1.0", "end")
+            self.txt_single.insert("1.0", next_sample)
+
+        self._sync_model_constraints(reset_dims=True, reset_colors=False, reset_relief=True)
+        self._schedule_preview()
 
     def _active_font(self) -> tuple[str, int]:
         if self.custom_font_path:
@@ -340,46 +488,54 @@ class TagApp(tk.Tk):
         lum = 0.299 * r + 0.587 * g + 0.114 * b
         return "#111111" if lum > 145 else "#FFFFFF"
 
+    def _apply_color_buttons(self, base_hex: str, text_hex: str) -> None:
+        self.base_color = base_hex.upper()
+        self.text_color = text_hex.upper()
+        self.btn_base_col.configure(
+            text=f" Base {self.base_color} ",
+            bg=self.base_color,
+            fg=self._contrast_fg(self.base_color),
+        )
+        self.btn_text_col.configure(
+            text=f" Testo {self.text_color} ",
+            bg=self.text_color,
+            fg=self._contrast_fg(self.text_color),
+        )
+
     def _pick_base_color(self) -> None:
         _, hx = colorchooser.askcolor(color=self.base_color, title="Colore Etichetta")
         if hx:
-            self.base_color = hx.upper()
-            self.btn_base_col.configure(
-                text=f" Base {self.base_color} ",
-                bg=self.base_color,
-                fg=self._contrast_fg(self.base_color),
-            )
+            self._colors_customized = True
+            self._apply_color_buttons(hx, self.text_color)
             self._render_preview_image()
 
     def _pick_text_color(self) -> None:
         _, hx = colorchooser.askcolor(color=self.text_color, title="Colore Testo")
         if hx:
-            self.text_color = hx.upper()
-            self.btn_text_col.configure(
-                text=f" Testo {self.text_color} ",
-                bg=self.text_color,
-                fg=self._contrast_fg(self.text_color),
-            )
+            self._colors_customized = True
+            self._apply_color_buttons(self.base_color, hx)
             self._render_preview_image()
 
     def _reset_colors(self) -> None:
-        self.base_color = tg.DEFAULT_BASE_COLOR
-        self.text_color = tg.DEFAULT_TEXT_COLOR
-        self.btn_base_col.configure(text=f" Base {self.base_color} ", bg=self.base_color, fg="#FFFFFF")
-        self.btn_text_col.configure(text=f" Testo {self.text_color} ", bg=self.text_color, fg="#111111")
+        spec = self._active_spec()
+        self._colors_customized = False
+        self._apply_color_buttons(spec.default_base_color, spec.default_text_color)
         self._render_preview_image()
 
     def _get_dimensions(self) -> tuple[float, float]:
+        spec = self._active_spec()
         try:
             w = float(self.var_width.get())
         except (tk.TclError, ValueError):
-            w = tg.DEFAULT_WIDTH_MM
+            w = spec.default_width_mm
+        w = max(spec.min_width_mm, min(spec.max_width_mm, round(w, 1)))
+        if spec.single_dimension:
+            return w, w
         try:
             h = float(self.var_height.get())
         except (tk.TclError, ValueError):
-            h = tg.DEFAULT_HEIGHT_MM
-        w = max(tg.MIN_WIDTH_MM, min(tg.MAX_WIDTH_MM, round(w, 1)))
-        h = max(tg.MIN_HEIGHT_MM, min(tg.MAX_HEIGHT_MM, round(h, 1)))
+            h = spec.default_height_mm
+        h = max(spec.min_height_mm, min(spec.max_height_mm, round(h, 1)))
         return w, h
 
     def _on_dimension_slider(self) -> None:
@@ -395,8 +551,9 @@ class TagApp(tk.Tk):
         self._schedule_preview()
 
     def _reset_dimensions(self) -> None:
-        self.var_width.set(tg.DEFAULT_WIDTH_MM)
-        self.var_height.set(tg.DEFAULT_HEIGHT_MM)
+        spec = self._active_spec()
+        self.var_width.set(spec.default_width_mm)
+        self.var_height.set(spec.default_height_mm)
         self._schedule_preview()
 
     def _on_margin_changed(self) -> None:
@@ -413,9 +570,12 @@ class TagApp(tk.Tk):
         self._preview_after_id = None
         text = self.txt_single.get("1.0", "end-1c")
         try:
+            spec = self._active_spec()
             fpath, fnum = self._active_font()
             margin = round(float(self.var_margin.get()), 2)
             width_mm, height_mm = self._get_dimensions()
+            relief_mode = self.var_relief_mode.get()
+            align = self.var_align.get()
             layout = tg.compute_tag_layout(
                 text=text,
                 font_path=fpath,
@@ -424,10 +584,16 @@ class TagApp(tk.Tk):
                 wrap_mode=self.var_wrap_mode.get(),
                 width_mm=width_mm,
                 height_mm=height_mm,
+                model_id=spec.model_id,
+                relief_mode=relief_mode,
+                align=align,
+                include_border=self.var_include_border.get(),
             )
             self.current_layout = layout
+            relief_desc = "a filo 0.6 mm (face-down)" if relief_mode == "flush" else "in rilievo +0.6 mm (totale 1.6 mm)"
+            dim_desc = f"Ø {layout.width_mm:.1f} mm" if spec.single_dimension else f"{layout.height_mm:.1f} × {layout.width_mm:.1f} mm"
             self.var_specs.set(
-                f"Dimensioni: {layout.height_mm:.1f} x {layout.width_mm:.1f} mm | Base: 1.0 mm | Testo a filo: 0.6 mm (face-down)"
+                f"Dimensioni: {dim_desc} | Base: 1.0 mm | Testo {relief_desc}"
             )
             if layout.lines:
                 self.var_metrics.set(
@@ -454,7 +620,7 @@ class TagApp(tk.Tk):
         img = Image.new("RGBA", (W, H), (244, 244, 246, 255))
         draw = ImageDraw.Draw(img)
 
-        mm_scale = min((W * 0.78) / max(layout.width_mm, 1.0), (H * 0.88) / max(layout.height_mm, 1.0))
+        mm_scale = min((W * 0.84) / max(layout.width_mm, 1.0), (H * 0.86) / max(layout.height_mm, 1.0))
         cx, cy = W * 0.5, H * 0.5
 
         def to_px(coords):
@@ -467,6 +633,11 @@ class TagApp(tk.Tk):
                     draw.polygon(to_px(hole.coords), fill=hole_color)
 
         draw_geom(layout.base_polygon, self.base_color, (244, 244, 246, 255))
+        if not layout.border_polygon.is_empty:
+            draw_geom(layout.border_polygon, self.text_color, self.base_color)
+            for poly in tg._geom_to_polys(layout.base_polygon):
+                for hole in poly.interiors:
+                    draw.polygon(to_px(hole.coords), fill=(244, 244, 246, 255))
 
         if self.var_show_usable.get() and not layout.usable_polygon.is_empty:
             for poly in tg._geom_to_polys(layout.usable_polygon):
@@ -609,9 +780,13 @@ class TagApp(tk.Tk):
             messagebox.showerror("Errore font", str(exc))
             return
 
+        spec = self._active_spec()
         margin = round(float(self.var_margin.get()), 2)
         width_mm, height_mm = self._get_dimensions()
         wrap_mode = self.var_wrap_mode.get()
+        relief_mode = self.var_relief_mode.get()
+        align = self.var_align.get()
+        include_border = self.var_include_border.get()
         do_3mf = self.var_batch_3mf.get()
         do_stl = self.var_batch_stl.get()
         b_col = self.base_color
@@ -640,6 +815,10 @@ class TagApp(tk.Tk):
                         wrap_mode=wrap_mode,
                         width_mm=width_mm,
                         height_mm=height_mm,
+                        model_id=spec.model_id,
+                        relief_mode=relief_mode,
+                        align=align,
+                        include_border=include_border,
                     )
                     meshes = tg.build_tag_meshes(lay)
                     if do_3mf:
