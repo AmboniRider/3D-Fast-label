@@ -5,28 +5,99 @@ Interfaccia grafica desktop (Tkinter) per il generatore di etichette 3D.
 from __future__ import annotations
 
 import csv
+import ctypes
+import sys
 import threading
 import tkinter as tk
 from pathlib import Path
 from tkinter import colorchooser, filedialog, messagebox, ttk
 
+import sv_ttk
 from PIL import Image, ImageDraw, ImageTk
 
 import tag_generator as tg
+
+THEME_PALETTES: dict[str, dict[str, object]] = {
+    "light": {
+        "preview_bg": "#F3F3F3",
+        "preview_rgba": (243, 243, 243, 255),
+        "usable_line": (50, 50, 50, 145),
+        "text_bg": "#FFFFFF",
+        "text_fg": "#1B1B1B",
+        "text_border": "#C9CDD4",
+        "card_bg": "#FFFFFF",
+        "card_active_bg": "#E7F0FF",
+        "card_hover_bg": "#F4F6F9",
+        "card_border": "#D0D7DE",
+        "card_active_border": "#0067C0",
+        "muted_fg": "#5F6368",
+        "info_fg": "#1F1F1F",
+        "toggle_label": "Tema: Chiaro  (passa a Scuro)",
+    },
+    "dark": {
+        "preview_bg": "#202020",
+        "preview_rgba": (32, 32, 32, 255),
+        "usable_line": (70, 70, 70, 175),
+        "text_bg": "#2B2B2B",
+        "text_fg": "#F3F3F3",
+        "text_border": "#484848",
+        "card_bg": "#2B2B2B",
+        "card_active_bg": "#1F364D",
+        "card_hover_bg": "#353535",
+        "card_border": "#444444",
+        "card_active_border": "#4CC2FF",
+        "muted_fg": "#AAAAAA",
+        "info_fg": "#EAEAEA",
+        "toggle_label": "Tema: Scuro  (passa a Chiaro)",
+    },
+}
+
+
+def _detect_windows_theme() -> str:
+    if sys.platform != "win32":
+        return "light"
+    try:
+        import winreg
+
+        with winreg.OpenKey(
+            winreg.HKEY_CURRENT_USER,
+            r"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize",
+        ) as key:
+            val, _ = winreg.QueryValueEx(key, "AppsUseLightTheme")
+            return "light" if int(val) == 1 else "dark"
+    except Exception:
+        return "light"
+
+
+def _set_windows_titlebar_dark(window: tk.Tk, dark: bool) -> None:
+    if sys.platform != "win32":
+        return
+    try:
+        window.update_idletasks()
+        hwnd = ctypes.windll.user32.GetParent(window.winfo_id())
+        value = ctypes.c_int(1 if dark else 0)
+        # DWMWA_USE_IMMERSIVE_DARK_MODE = 20 (Windows 11 / 10 2004+)
+        ctypes.windll.dwmapi.DwmSetWindowAttribute(
+            hwnd, 20, ctypes.byref(value), ctypes.sizeof(value)
+        )
+    except Exception:
+        pass
 
 
 class TagApp(tk.Tk):
     def __init__(self) -> None:
         super().__init__()
-        self.title("Generatore Targhette 3D (.3MF / .STL)")
-        self.geometry("1080x740")
-        self.minsize(960, 650)
+        self.title("3D Fast Label v1.0 beta")
+        self.geometry("1220x830")
+        self.minsize(1040, 720)
 
+        self.current_theme = _detect_windows_theme()
         self.fonts = tg.discover_system_fonts()
         default_font = tg.pick_default_font(self.fonts)
 
         self._model_specs = list(tg.MODEL_SPECS.values())
         self._spec_by_display = {s.display_name: s for s in self._model_specs}
+        self._spec_by_id = {s.model_id: s for s in self._model_specs}
         init_spec = tg.get_model_spec(tg.DEFAULT_MODEL_ID)
 
         self.custom_font_path: str | None = None
@@ -36,8 +107,11 @@ class TagApp(tk.Tk):
         self.current_layout: tg.TagLayout | None = None
         self._preview_after_id: str | None = None
         self._preview_photo: ImageTk.PhotoImage | None = None
+        self._model_thumb_photos: dict[str, ImageTk.PhotoImage] = {}
+        self._model_cards: dict[str, tuple[tk.Frame, tk.Button]] = {}
         self._batch_running = False
 
+        self.var_model_id = tk.StringVar(value=init_spec.model_id)
         self.var_model_name = tk.StringVar(value=init_spec.display_name)
         self.var_relief_mode = tk.StringVar(value=init_spec.default_relief_mode)
         self.var_align = tk.StringVar(value="center")
@@ -51,6 +125,7 @@ class TagApp(tk.Tk):
         self.var_status = tk.StringVar(value="Pronto")
         self.var_metrics = tk.StringVar(value="")
         self.var_specs = tk.StringVar(value="")
+        self.var_theme_btn = tk.StringVar(value=str(THEME_PALETTES[self.current_theme]["toggle_label"]))
 
         # Variabili batch
         default_out = str(Path.cwd() / "output_targhette")
@@ -59,23 +134,52 @@ class TagApp(tk.Tk):
         self.var_batch_stl = tk.BooleanVar(value=False)
 
         self._build_ui()
+        self._apply_theme(self.current_theme)
         self._sync_model_constraints(reset_dims=True, reset_colors=False, reset_relief=True)
         self._schedule_preview()
 
     def _active_spec(self) -> tg.ModelSpec:
-        return self._spec_by_display.get(
-            self.var_model_name.get(),
+        return self._spec_by_id.get(
+            self.var_model_id.get(),
             tg.get_model_spec(tg.DEFAULT_MODEL_ID),
         )
 
     def _build_ui(self) -> None:
-        self.columnconfigure(0, weight=1, minsize=510)
-        self.columnconfigure(1, weight=1, minsize=400)
-        self.rowconfigure(0, weight=1)
+        self.columnconfigure(0, weight=1, minsize=540)
+        self.columnconfigure(1, weight=1, minsize=410)
+        self.rowconfigure(0, weight=0)
+        self.rowconfigure(1, weight=1)
 
-        left = ttk.Frame(self, padding=12)
-        left.grid(row=0, column=0, sticky="nsew")
-        left.rowconfigure(0, weight=1)
+        # Barra superiore con titolo e cambio tema Chiaro/Scuro
+        header = ttk.Frame(self, padding=(14, 10, 14, 4))
+        header.grid(row=0, column=0, columnspan=2, sticky="ew")
+        header.columnconfigure(0, weight=1)
+
+        title_box = ttk.Frame(header)
+        title_box.grid(row=0, column=0, sticky="w")
+        ttk.Label(
+            title_box,
+            text="3D Fast Label",
+            font=("Segoe UI Variable Display", 14, "bold"),
+        ).pack(side="left")
+        self.lbl_subtitle = ttk.Label(
+            title_box,
+            text="  |  v1.0 beta  •  Stampa multi-colore .3MF e .STL",
+            font=("Segoe UI", 9),
+        )
+        self.lbl_subtitle.pack(side="left", pady=(3, 0))
+
+        self.btn_theme = ttk.Button(
+            header,
+            textvariable=self.var_theme_btn,
+            command=self._toggle_theme,
+        )
+        self.btn_theme.grid(row=0, column=1, sticky="e")
+
+        left = ttk.Frame(self, padding=(14, 6, 10, 12))
+        left.grid(row=1, column=0, sticky="nsew")
+        left.rowconfigure(0, weight=0)
+        left.rowconfigure(1, weight=1)
         left.columnconfigure(0, weight=1)
 
         notebook = ttk.Notebook(left)
@@ -89,38 +193,42 @@ class TagApp(tk.Tk):
         self._build_single_tab(tab_single)
         self._build_batch_tab(tab_batch)
 
+        # Selettore visivo modelli con anteprima (sostituisce la tendina)
+        model_box = ttk.LabelFrame(left, text="Seleziona Modello", padding=8)
+        model_box.grid(row=1, column=0, sticky="nsew", pady=(10, 0))
+        self._build_model_selector(model_box)
+
         # Barra impostazioni comuni
         common = ttk.LabelFrame(left, text="Stile e Parametri Modello", padding=10)
-        common.grid(row=1, column=0, sticky="ew", pady=(10, 0))
+        common.grid(row=2, column=0, sticky="ew", pady=(10, 0))
         self._build_common_settings(common)
 
         # Status bar in basso a sinistra
-        status_lbl = ttk.Label(left, textvariable=self.var_status, foreground="#444444")
-        status_lbl.grid(row=2, column=0, sticky="w", pady=(8, 0))
+        self.status_lbl = ttk.Label(left, textvariable=self.var_status)
+        self.status_lbl.grid(row=3, column=0, sticky="w", pady=(8, 0))
 
         # Colonna destra: Anteprima
         right = ttk.LabelFrame(self, text="Anteprima Frontale (scala reale)", padding=10)
-        right.grid(row=0, column=1, sticky="nsew", padx=(0, 12), pady=12)
+        right.grid(row=1, column=1, sticky="nsew", padx=(0, 14), pady=(6, 12))
         right.rowconfigure(0, weight=1)
         right.columnconfigure(0, weight=1)
 
-        self.preview_label = ttk.Label(right, anchor="center", background="#F4F4F6")
+        self.preview_label = ttk.Label(right, anchor="center")
         self.preview_label.grid(row=0, column=0, sticky="nsew")
         self.preview_label.bind("<Configure>", lambda _e: self._render_preview_image())
 
-        info_lbl = ttk.Label(right, textvariable=self.var_metrics, justify="center", foreground="#333333")
-        info_lbl.grid(row=1, column=0, sticky="ew", pady=(8, 0))
+        self.info_lbl = ttk.Label(right, textvariable=self.var_metrics, justify="center")
+        self.info_lbl.grid(row=1, column=0, sticky="ew", pady=(8, 0))
 
-        spec_lbl = ttk.Label(
+        self.spec_lbl = ttk.Label(
             right,
             textvariable=self.var_specs,
-            foreground="#666666",
             font=("Segoe UI", 8),
             anchor="center",
             justify="center",
             wraplength=460,
         )
-        spec_lbl.grid(row=2, column=0, sticky="ew", pady=(2, 0))
+        self.spec_lbl.grid(row=2, column=0, sticky="ew", pady=(2, 0))
 
     def _build_single_tab(self, parent: ttk.Frame) -> None:
         parent.columnconfigure(0, weight=1)
@@ -128,8 +236,8 @@ class TagApp(tk.Tk):
         ttk.Label(parent, text="Testo dell'etichetta (premi Invio per andare a capo manualmente):").grid(
             row=0, column=0, sticky="w"
         )
-        self.txt_single = tk.Text(parent, height=4, font=("Segoe UI", 12), wrap="word")
-        self.txt_single.insert("1.0", "ABUS LUCH.")
+        self.txt_single = tk.Text(parent, height=3, font=("Segoe UI", 12), wrap="word")
+        self.txt_single.insert("1.0", "Line 1")
         self.txt_single.grid(row=1, column=0, sticky="ew", pady=(4, 10))
         self.txt_single.bind("<KeyRelease>", lambda _e: self._schedule_preview())
 
@@ -175,6 +283,7 @@ class TagApp(tk.Tk):
         ttk.Button(
             btns,
             text="Salva .3MF (Multi-colore)",
+            style="Accent.TButton",
             command=self._export_single_3mf,
         ).grid(row=0, column=0, sticky="ew", padx=(0, 5), pady=3)
 
@@ -199,8 +308,8 @@ class TagApp(tk.Tk):
         ttk.Label(top, text="Una targhetta per riga (usa '|' per forzare a capo):").pack(side="left")
         ttk.Button(top, text="Carica TXT/CSV...", command=self._load_batch_file).pack(side="right")
 
-        self.txt_batch = tk.Text(parent, height=8, font=("Consolas", 10))
-        self.txt_batch.insert("1.0", "ABUS LUCH.\nCANCELLO NORD\nGARAGE|PRINCIPALE\nCANTINA")
+        self.txt_batch = tk.Text(parent, height=5, font=("Consolas", 10))
+        self.txt_batch.insert("1.0", "Line 1\nLine 1|Line 2\nLine 1|Line 2|Line 3")
         self.txt_batch.grid(row=1, column=0, sticky="nsew", pady=(6, 8))
 
         fmt_frame = ttk.Frame(parent)
@@ -221,24 +330,133 @@ class TagApp(tk.Tk):
         self.btn_run_batch = ttk.Button(
             parent,
             text="Genera Tutte le Targhette",
+            style="Accent.TButton",
             command=self._run_batch,
         )
         self.btn_run_batch.grid(row=5, column=0, sticky="ew")
 
+    def _build_model_selector(self, parent: ttk.LabelFrame) -> None:
+        parent.rowconfigure(0, weight=1)
+        sample_texts = {
+            "san_p_0": ("Line 1", "center"),
+            "san_p_1": ("Line 1\nLine 2\nLine 3", "left"),
+            "san_p_2": ("Line 1", "center"),
+        }
+        fpath, fnum = self._active_font()
+
+        for col, spec in enumerate(self._model_specs):
+            parent.columnconfigure(col, weight=1)
+            sample_txt, sample_align = sample_texts.get(spec.model_id, ("Line 1", "center"))
+            lay = tg.compute_tag_layout(
+                text=sample_txt,
+                font_path=fpath,
+                font_number=fnum,
+                margin_mm=tg.DEFAULT_MARGIN_MM,
+                width_mm=spec.default_width_mm,
+                height_mm=spec.default_height_mm,
+                model_id=spec.model_id,
+                relief_mode=spec.default_relief_mode,
+                align=sample_align,
+                include_border=spec.supports_border,
+            )
+            png_bytes = tg.render_thumbnail_png(
+                lay,
+                base_color=spec.default_base_color,
+                text_color=spec.default_text_color,
+                size=(150, 126),
+                fill_ratio=0.90,
+            )
+            photo = tk.PhotoImage(data=png_bytes)
+            self._model_thumb_photos[spec.model_id] = photo
+
+            card = tk.Frame(parent, highlightthickness=2, bd=0)
+            card.grid(row=0, column=col, sticky="nsew", padx=4, pady=2)
+            card.rowconfigure(0, weight=1)
+            card.columnconfigure(0, weight=1)
+
+            btn = tk.Button(
+                card,
+                image=photo,
+                relief="flat",
+                bd=0,
+                padx=4,
+                pady=4,
+                cursor="hand2",
+                command=lambda mid=spec.model_id: self._select_model(mid),
+            )
+            btn.grid(row=0, column=0, sticky="nsew")
+            self._model_cards[spec.model_id] = (card, btn)
+
+    def _toggle_theme(self) -> None:
+        next_theme = "dark" if self.current_theme == "light" else "light"
+        self._apply_theme(next_theme)
+
+    def _apply_theme(self, theme_name: str) -> None:
+        theme = "dark" if theme_name == "dark" else "light"
+        self.current_theme = theme
+        sv_ttk.set_theme(theme)
+        _set_windows_titlebar_dark(self, dark=(theme == "dark"))
+
+        pal = THEME_PALETTES[theme]
+        self.var_theme_btn.set(str(pal["toggle_label"]))
+
+        for txt_widget in (self.txt_single, self.txt_batch):
+            txt_widget.configure(
+                bg=str(pal["text_bg"]),
+                fg=str(pal["text_fg"]),
+                insertbackground=str(pal["text_fg"]),
+                highlightbackground=str(pal["text_border"]),
+                highlightcolor=str(pal["card_active_border"]),
+                highlightthickness=1,
+                relief="flat",
+            )
+
+        self.lbl_subtitle.configure(foreground=str(pal["muted_fg"]))
+        self.status_lbl.configure(foreground=str(pal["muted_fg"]))
+        self.info_lbl.configure(foreground=str(pal["info_fg"]))
+        self.spec_lbl.configure(foreground=str(pal["muted_fg"]))
+        self.preview_label.configure(background=str(pal["preview_bg"]))
+
+        self._update_model_card_styles()
+        self._render_preview_image()
+
+    def _update_model_card_styles(self) -> None:
+        active_id = self.var_model_id.get()
+        pal = THEME_PALETTES[self.current_theme]
+        for mid, (card, btn) in self._model_cards.items():
+            if mid == active_id:
+                card.configure(
+                    highlightbackground=str(pal["card_active_border"]),
+                    highlightcolor=str(pal["card_active_border"]),
+                )
+                btn.configure(
+                    bg=str(pal["card_active_bg"]),
+                    activebackground=str(pal["card_active_bg"]),
+                )
+            else:
+                card.configure(
+                    highlightbackground=str(pal["card_border"]),
+                    highlightcolor=str(pal["card_border"]),
+                )
+                btn.configure(
+                    bg=str(pal["card_bg"]),
+                    activebackground=str(pal["card_hover_bg"]),
+                )
+
+    def _select_model(self, model_id: str) -> None:
+        if model_id not in self._spec_by_id:
+            return
+        self.var_model_id.set(model_id)
+        self.var_model_name.set(self._spec_by_id[model_id].display_name)
+        self._on_model_changed()
+
     def _build_common_settings(self, parent: ttk.LabelFrame) -> None:
         parent.columnconfigure(1, weight=1)
 
-        # Selezione modello
-        ttk.Label(parent, text="Modello:").grid(row=0, column=0, sticky="w", pady=3)
-        model_names = [s.display_name for s in self._model_specs]
-        self.cmb_model = ttk.Combobox(parent, textvariable=self.var_model_name, values=model_names, state="readonly")
-        self.cmb_model.grid(row=0, column=1, columnspan=2, sticky="ew", padx=(8, 0), pady=3)
-        self.cmb_model.bind("<<ComboboxSelected>>", self._on_model_changed)
-
         # Tipo testo: A filo vs In rilievo
-        ttk.Label(parent, text="Stile testo:").grid(row=1, column=0, sticky="w", pady=3)
+        ttk.Label(parent, text="Stile testo:").grid(row=0, column=0, sticky="w", pady=3)
         rel_frame = ttk.Frame(parent)
-        rel_frame.grid(row=1, column=1, columnspan=2, sticky="w", padx=(8, 0), pady=3)
+        rel_frame.grid(row=0, column=1, columnspan=2, sticky="w", padx=(8, 0), pady=3)
         ttk.Radiobutton(
             rel_frame,
             text="A filo (0.4–1.0 mm, face-down)",
@@ -261,17 +479,17 @@ class TagApp(tk.Tk):
         )
 
         # Font selector
-        ttk.Label(parent, text="Font:").grid(row=2, column=0, sticky="w", pady=3)
+        ttk.Label(parent, text="Font:").grid(row=1, column=0, sticky="w", pady=3)
         font_names = [f.display_name for f in self.fonts]
         self.cmb_font = ttk.Combobox(parent, textvariable=self.var_font_name, values=font_names, state="readonly")
-        self.cmb_font.grid(row=2, column=1, sticky="ew", padx=(8, 6), pady=3)
+        self.cmb_font.grid(row=1, column=1, sticky="ew", padx=(8, 6), pady=3)
         self.cmb_font.bind("<<ComboboxSelected>>", self._on_system_font_selected)
-        ttk.Button(parent, text="File .ttf/.otf...", command=self._browse_custom_font).grid(row=2, column=2, pady=3)
+        ttk.Button(parent, text="File .ttf/.otf...", command=self._browse_custom_font).grid(row=1, column=2, pady=3)
 
         # Colori
-        ttk.Label(parent, text="Colori 3MF:").grid(row=3, column=0, sticky="w", pady=4)
+        ttk.Label(parent, text="Colori 3MF:").grid(row=2, column=0, sticky="w", pady=4)
         col_frame = ttk.Frame(parent)
-        col_frame.grid(row=3, column=1, columnspan=2, sticky="w", padx=(8, 0), pady=4)
+        col_frame.grid(row=2, column=1, columnspan=2, sticky="w", padx=(8, 0), pady=4)
 
         self.btn_base_col = tk.Button(
             col_frame,
@@ -297,10 +515,10 @@ class TagApp(tk.Tk):
 
         # Dimensioni dinamiche per modello (V/O oppure Diametro singolo per San_P_2)
         self.lbl_dims = ttk.Label(parent, text="Dimensioni (mm):")
-        self.lbl_dims.grid(row=4, column=0, sticky="w", pady=3)
+        self.lbl_dims.grid(row=3, column=0, sticky="w", pady=3)
 
         self.dim_frame_2d = ttk.Frame(parent)
-        self.dim_frame_2d.grid(row=4, column=1, columnspan=2, sticky="ew", padx=(8, 0), pady=3)
+        self.dim_frame_2d.grid(row=3, column=1, columnspan=2, sticky="ew", padx=(8, 0), pady=3)
         self.dim_frame_2d.columnconfigure(1, weight=1)
         self.dim_frame_2d.columnconfigure(4, weight=1)
 
@@ -353,7 +571,7 @@ class TagApp(tk.Tk):
 
         # Frame singola dimensione (Diametro) per modelli circolari
         self.dim_frame_1d = ttk.Frame(parent)
-        self.dim_frame_1d.grid(row=4, column=1, columnspan=2, sticky="ew", padx=(8, 0), pady=3)
+        self.dim_frame_1d.grid(row=3, column=1, columnspan=2, sticky="ew", padx=(8, 0), pady=3)
         self.dim_frame_1d.columnconfigure(1, weight=1)
         ttk.Label(self.dim_frame_1d, text="Ø:").grid(row=0, column=0, sticky="w")
         self.sc_diam = ttk.Scale(
@@ -381,9 +599,9 @@ class TagApp(tk.Tk):
         self.dim_frame_1d.grid_remove()
 
         # Margine
-        ttk.Label(parent, text="Margine (mm):").grid(row=5, column=0, sticky="w", pady=3)
+        ttk.Label(parent, text="Margine (mm):").grid(row=4, column=0, sticky="w", pady=3)
         m_frame = ttk.Frame(parent)
-        m_frame.grid(row=5, column=1, columnspan=2, sticky="ew", padx=(8, 0), pady=3)
+        m_frame.grid(row=4, column=1, columnspan=2, sticky="ew", padx=(8, 0), pady=3)
         m_frame.columnconfigure(0, weight=1)
 
         scale = ttk.Scale(
@@ -439,17 +657,14 @@ class TagApp(tk.Tk):
             self.var_relief_mode.set(spec.default_relief_mode)
         if reset_colors or not self._colors_customized:
             self._apply_color_buttons(spec.default_base_color, spec.default_text_color)
+        self._update_model_card_styles()
 
     def _on_model_changed(self, _evt=None) -> None:
         spec = self._active_spec()
         cur_txt = self.txt_single.get("1.0", "end-1c").strip()
-        sample_defaults = {"ABUS LUCH.", "Line 1\nLine 2\nLine 3", "Testo"}
+        sample_defaults = {"Line 1", "Line 1\nLine 2\nLine 3", ""}
         if cur_txt in sample_defaults:
-            next_sample = {
-                "san_p_0": "ABUS LUCH.",
-                "san_p_1": "Line 1\nLine 2\nLine 3",
-                "san_p_2": "Testo",
-            }.get(spec.model_id, cur_txt)
+            next_sample = "Line 1\nLine 2\nLine 3" if spec.model_id == "san_p_1" else "Line 1"
             self.txt_single.delete("1.0", "end")
             self.txt_single.insert("1.0", next_sample)
 
@@ -615,9 +830,13 @@ class TagApp(tk.Tk):
         w = max(self.preview_label.winfo_width(), 320)
         h = max(self.preview_label.winfo_height(), 460)
 
+        pal = THEME_PALETTES[self.current_theme]
+        bg_rgba = pal["preview_rgba"]
+        usable_rgba = pal["usable_line"]
+
         ss = 2
         W, H = w * ss, h * ss
-        img = Image.new("RGBA", (W, H), (244, 244, 246, 255))
+        img = Image.new("RGBA", (W, H), bg_rgba)
         draw = ImageDraw.Draw(img)
 
         mm_scale = min((W * 0.84) / max(layout.width_mm, 1.0), (H * 0.86) / max(layout.height_mm, 1.0))
@@ -632,18 +851,18 @@ class TagApp(tk.Tk):
                 for hole in poly.interiors:
                     draw.polygon(to_px(hole.coords), fill=hole_color)
 
-        draw_geom(layout.base_polygon, self.base_color, (244, 244, 246, 255))
+        draw_geom(layout.base_polygon, self.base_color, bg_rgba)
         if not layout.border_polygon.is_empty:
             draw_geom(layout.border_polygon, self.text_color, self.base_color)
             for poly in tg._geom_to_polys(layout.base_polygon):
                 for hole in poly.interiors:
-                    draw.polygon(to_px(hole.coords), fill=(244, 244, 246, 255))
+                    draw.polygon(to_px(hole.coords), fill=bg_rgba)
 
         if self.var_show_usable.get() and not layout.usable_polygon.is_empty:
             for poly in tg._geom_to_polys(layout.usable_polygon):
                 pts = to_px(poly.exterior.coords)
                 for i in range(0, len(pts) - 1, 2):
-                    draw.line([pts[i], pts[i + 1]], fill=(255, 255, 255, 160), width=max(1, ss))
+                    draw.line([pts[i], pts[i + 1]], fill=usable_rgba, width=max(1, ss))
 
         if not layout.text_polygon.is_empty:
             draw_geom(layout.text_polygon, self.text_color, self.base_color)

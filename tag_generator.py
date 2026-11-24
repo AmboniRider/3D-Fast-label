@@ -53,8 +53,8 @@ SAN2_HOLE_RADIUS_MM = 2.5
 SAN2_HOLE_OFFSET_TOP_MM = 6.5  # 17.5 - 11.0
 SAN2_BORDER_WIDTH_MM = 1.0
 
-DEFAULT_BASE_COLOR = "#E03D19"
-DEFAULT_TEXT_COLOR = "#FFFFFF"
+DEFAULT_BASE_COLOR = "#FDE68A"
+DEFAULT_TEXT_COLOR = "#000000"
 DEFAULT_MARGIN_MM = 2.5
 AUTO_WRAP_MIN_LINE_HEIGHT_MM = 5.2
 
@@ -98,8 +98,8 @@ MODEL_SPECS: dict[str, ModelSpec] = {
         default_height_mm=70.0,
         min_height_mm=60.0,
         max_height_mm=80.0,
-        default_base_color="#E03D19",
-        default_text_color="#FFFFFF",
+        default_base_color=DEFAULT_BASE_COLOR,
+        default_text_color=DEFAULT_TEXT_COLOR,
         default_relief_mode="flush",
         text_orientation="vertical",
     ),
@@ -112,8 +112,8 @@ MODEL_SPECS: dict[str, ModelSpec] = {
         default_height_mm=51.0,
         min_height_mm=41.0,
         max_height_mm=61.0,
-        default_base_color="#F79622",
-        default_text_color="#353535",
+        default_base_color=DEFAULT_BASE_COLOR,
+        default_text_color=DEFAULT_TEXT_COLOR,
         default_relief_mode="raised",
         text_orientation="horizontal",
     ),
@@ -126,8 +126,8 @@ MODEL_SPECS: dict[str, ModelSpec] = {
         default_height_mm=35.0,
         min_height_mm=30.0,
         max_height_mm=40.0,
-        default_base_color="#FCD19C",
-        default_text_color="#000000",
+        default_base_color=DEFAULT_BASE_COLOR,
+        default_text_color=DEFAULT_TEXT_COLOR,
         default_relief_mode="raised",
         text_orientation="horizontal",
         single_dimension=True,
@@ -955,15 +955,16 @@ def render_thumbnail_png(
     base_color: str = DEFAULT_BASE_COLOR,
     text_color: str = DEFAULT_TEXT_COLOR,
     size: tuple[int, int] = (480, 480),
+    fill_ratio: float = 0.68,
 ) -> bytes:
-    """Renderizza un'anteprima PNG ad alta qualità (usata sia per la miniatura 3MF che per export)."""
+    """Renderizza un'anteprima PNG ad alta qualità (usata sia per la miniatura 3MF che per i pulsanti)."""
     w, h = size
     scale = 4
     W, H = w * scale, h * scale
     img = Image.new("RGBA", (W, H), (255, 255, 255, 0))
     draw = ImageDraw.Draw(img)
 
-    mm_scale = min((W * 0.68) / max(layout.width_mm, 1.0), (H * 0.68) / max(layout.height_mm, 1.0))
+    mm_scale = min((W * fill_ratio) / max(layout.width_mm, 1.0), (H * fill_ratio) / max(layout.height_mm, 1.0))
     cx, cy = W * 0.5, H * 0.5
 
     def to_px(coords):

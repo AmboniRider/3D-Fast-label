@@ -1,4 +1,4 @@
-# Generatore Targhette 3D (`.3MF` / `.STL`)
+# 3D Fast Label (`v1.0 beta`)
 
 Applicazione desktop in Python per generare targhette/portachiavi personalizzati pronti per la stampa 3D multi-colore, basata sui modelli di riferimento presenti in `modelli/` (`San_P_0`, `San_P_1`, `San_P_2`).
 
@@ -18,12 +18,14 @@ Applicazione desktop in Python per generare targhette/portachiavi personalizzati
   - Ridimensionamento automatico al massimo formato leggibile entro il margine configurabile (`1.0–5.0 mm`) dal bordo e dal foro.
 - **Font e colori personalizzabili**:
   - Selezione tra tutti i font di sistema Windows (predefinito `Arial Narrow Bold`) oppure caricamento di un file `.ttf` / `.otf` personalizzato.
-  - Scelta dei due colori per il file `.3mf` (predefiniti `#E03D19` per l'etichetta e `#FFFFFF` per il testo).
+  - Scelta dei due colori per il file `.3mf` (predefiniti `#FDE68A` giallo chiaro per l'etichetta e `#000000` nero per il testo).
 - **Esportazione flessibile**:
   - **`.3MF` multi-colore** (struttura compatibile Bambu Studio / OrcaSlicer con due estrusori separati: `Etichetta` ed `Testo`, più miniatura dinamica).
   - **2 file `.STL` separati** (`*_base.stl` e `*_testo.stl`) già allineati e orientati *face-down* sul piatto.
 - **Generazione Multipla (Batch)**:
   - Creazione automatica in serie da elenco incollato o importato da file `.txt` / `.csv` (una targhetta per riga; usa `|` per forzare l'a capo).
+- **Interfaccia moderna (`sv-ttk`) con Tema Chiaro / Scuro**:
+  - Rilevamento automatico del tema di Windows all'avvio e pulsante nella barra superiore per passare in tempo reale tra tema **Chiaro** e **Scuro**.
 
 ## Requisiti
 
