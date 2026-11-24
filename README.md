@@ -48,8 +48,8 @@ Al primo avvio lo script crea automaticamente l'ambiente virtuale `.venv` tramit
 ### Metodo manuale da terminale
 
 ```powershell
-git clone https://github.com/AmboniRider/targhette.git
-cd targhette
+git clone https://github.com/AmboniRider/3D-Fast-label.git
+cd 3D-Fast-label
 uv sync
 .venv\Scripts\python.exe app.py
 ```
