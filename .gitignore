@@ -1,0 +1,16 @@
+# Ambienti virtuali e cache Python
+.venv/
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.pytest_cache/
+
+# Cartella predefinita esportazioni batch
+output_targhette/
+
+# File di sistema / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
