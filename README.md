@@ -12,7 +12,7 @@ Applicazione desktop in Python per generare targhette/portachiavi personalizzati
   - **Circolare** (`Targhetta round.step`): diametro **30–40 mm** (predefinito **35 mm**), spessore base **1.0–2.2 mm** (predefinito **1.6 mm**), foro superiore (`Ø 5 mm` a `5.5 mm` dal bordo), bordino circolare esterno opzionale da `1.0 mm` (disattivo di default) e testo orizzontale.
 - **Spessore base regolabile** (`±0.6 mm` rispetto al default STEP, passo `0.2 mm`) e **due stili di rilievo selezionabili su tutti i modelli**:
   - **A filo (`0.6 mm`, *face-down*)**: base con sede incassata `0.6 mm` (`T-0.6..T`) e testo a filo tramite sottrazione geometrica 2.5D senza sovrapposizioni, pronto per stampa capovolta sul piatto.
-  - **In rilievo (`+0.6 mm`)**: base piena con testo in rilievo `0.6 mm` sopra la superficie (`T..T+0.6`).
+  - **In rilievo (`0.4–1.6 mm`, passo `0.2 mm`)**: sporgenza del testo regolabile sopra la base (default `+0.6 mm`) con inserimento fisso `-0.2 mm` all'interno della base (`T-0.2..T+R`) tramite sottrazione geometrica pulita senza sovrapposizioni.
 - **Adattamento automatico e allineamento del testo**:
   - Supporto sia a **riga singola** che a **più righe** (a capo manuale con `Invio` oppure automatico se il testo è troppo lungo), con allineamento **Centro** o **Sinistra**.
   - Ridimensionamento automatico al massimo formato leggibile entro il margine configurabile (`1.0–5.0 mm`) dal bordo e dal foro.

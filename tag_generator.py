@@ -38,6 +38,11 @@ from fontTools.ttLib import TTFont
 from PIL import Image, ImageDraw
 
 TEXT_THICKNESS = 0.6
+TEXT_INSERT_DEPTH_MM = 0.2   # inserimento fisso nella base in modalita' in rilievo
+MIN_RELIEF_HEIGHT_MM = 0.4
+DEFAULT_RELIEF_HEIGHT_MM = 0.6
+MAX_RELIEF_HEIGHT_MM = 1.6
+RELIEF_STEP_MM = 0.2
 CHAMFER_MM = 0.2
 BORDER_RAISED_HEIGHT = 0.4  # bordino circolare opzionale in rilievo sopra la base
 THICKNESS_STEP_MM = 0.2
@@ -194,6 +199,7 @@ class TagLayout:
     chamfer_mm: float = CHAMFER_MM
     model_id: str = DEFAULT_MODEL_ID
     relief_mode: str = "flush"
+    relief_height_mm: float = DEFAULT_RELIEF_HEIGHT_MM
     align: str = "center"
     border_polygon: sg.base.BaseGeometry = field(default_factory=sg.GeometryCollection)
     include_border: bool = False
@@ -733,6 +739,7 @@ def compute_tag_layout(
     thickness_mm: float | None = None,
     model_id: str = DEFAULT_MODEL_ID,
     relief_mode: str | None = None,
+    relief_height_mm: float = DEFAULT_RELIEF_HEIGHT_MM,
     align: str = "center",
     include_border: bool = False,
 ) -> TagLayout:
@@ -743,6 +750,7 @@ def compute_tag_layout(
     t_req = spec.default_thickness_mm if thickness_mm is None else thickness_mm
     t_clamped = round(float(np.clip(t_req, spec.min_thickness_mm, spec.max_thickness_mm)), 2)
     relief = relief_mode if relief_mode in ("flush", "raised") else spec.default_relief_mode
+    relief_h = round(float(np.clip(relief_height_mm, MIN_RELIEF_HEIGHT_MM, MAX_RELIEF_HEIGHT_MM)), 2)
     align_norm = align if align in ("center", "left") else "center"
     use_border = bool(include_border and spec.supports_border)
 
@@ -778,6 +786,7 @@ def compute_tag_layout(
             chamfer_mm=profile.chamfer_mm,
             model_id=model_id,
             relief_mode=relief,
+            relief_height_mm=relief_h,
             align=align_norm,
             border_polygon=border_poly,
             include_border=use_border,
@@ -991,11 +1000,28 @@ def _clean_geom(geom: sg.base.BaseGeometry) -> sg.base.BaseGeometry:
     return so.unary_union(polys).simplify(1e-6, preserve_topology=True).buffer(0)
 
 
+def _build_pocketed_base(
+    profile: BaseProfile,
+    thickness: float,
+    pocket_cut_geom: sg.base.BaseGeometry,
+    pocket_z_min: float,
+) -> trimesh.Trimesh:
+    """Costruisce la base smussata con sede incassata tra `pocket_z_min` e `thickness`."""
+    B_top = profile.chamfer_polygon
+    R = B_top.difference(pocket_cut_geom).buffer(0)
+    pocket_geom = B_top.difference(R).buffer(0)
+    b_parts = _build_chamfered_base_parts(profile, thickness, top_cap_geom=R)
+    b_parts.extend(_build_geom_walls(pocket_geom, pocket_z_min, thickness, invert=True))
+    b_parts.append(_build_cap(pocket_geom, pocket_z_min, flip_normal=False))
+    return _combine_mesh_parts(b_parts)
+
+
 def build_tag_meshes(layout: TagLayout) -> TagMeshes:
     """
     Genera le 2 mesh 3D non sovrapposte e chiuse (watertight) con smussi 0.2 mm x 45°:
     - Modalita' "flush": base Z in [0.0, T] con sede incassata Z in [T-0.6, T]; testo/bordo Z in [T-0.6, T].
-    - Modalita' "raised": base piena Z in [0.0, T]; testo in rilievo Z in [T, T+0.6] (+ bordino Z in [T, T+0.4]).
+    - Modalita' "raised": inserimento fisso -0.2 mm nella base e sporgenza R (0.4..1.6 mm) sopra T:
+      testo Z in [T-0.2, T+R] (+ bordino Z in [T-0.2, T+0.4]), sottratti dalla base in [T-0.2, T].
     """
     thickness = float(layout.thickness_mm)
     profile = layout.base_profile
@@ -1009,14 +1035,28 @@ def build_tag_meshes(layout: TagLayout) -> TagMeshes:
 
     T = _clean_geom(layout.text_polygon)
     B_rim = _clean_geom(layout.border_polygon)
+    B_top = profile.chamfer_polygon
+    safe_top = B_top.buffer(-1e-3)
 
     if layout.relief_mode == "raised":
-        base_mesh = _combine_mesh_parts(_build_chamfered_base_parts(profile, thickness))
+        relief_h = float(np.clip(layout.relief_height_mm, MIN_RELIEF_HEIGHT_MM, MAX_RELIEF_HEIGHT_MM))
+        insert_z_min = max(profile.chamfer_mm + 0.05, thickness - TEXT_INSERT_DEPTH_MM)
+        T_safe = _clean_geom(T.intersection(safe_top)) if not T.is_empty else sg.GeometryCollection()
+        B_safe = _clean_geom(B_rim.intersection(safe_top)) if not B_rim.is_empty else sg.GeometryCollection()
+
+        cut_parts = [g for g in (T_safe, B_safe) if not g.is_empty]
+        if not cut_parts:
+            base_mesh = _combine_mesh_parts(_build_chamfered_base_parts(profile, thickness))
+            return TagMeshes(layout=layout, base_mesh=base_mesh, text_mesh=trimesh.Trimesh())
+
+        pocket_cut = _clean_geom(so.unary_union(cut_parts))
+        base_mesh = _build_pocketed_base(profile, thickness, pocket_cut, insert_z_min)
+
         ext2_meshes: list[trimesh.Trimesh] = []
-        if not T.is_empty:
-            ext2_meshes.append(_extrude_geom_range(T, thickness, thickness + TEXT_THICKNESS))
-        if not B_rim.is_empty:
-            ext2_meshes.append(_extrude_geom_range(B_rim, thickness, thickness + BORDER_RAISED_HEIGHT))
+        if not T_safe.is_empty:
+            ext2_meshes.append(_extrude_geom_range(T_safe, insert_z_min, thickness + relief_h))
+        if not B_safe.is_empty:
+            ext2_meshes.append(_extrude_geom_range(B_safe, insert_z_min, thickness + BORDER_RAISED_HEIGHT))
         text_mesh = trimesh.util.concatenate(ext2_meshes) if ext2_meshes else trimesh.Trimesh()
         return TagMeshes(layout=layout, base_mesh=base_mesh, text_mesh=text_mesh)
 
@@ -1026,8 +1066,6 @@ def build_tag_meshes(layout: TagLayout) -> TagMeshes:
         base_mesh = _combine_mesh_parts(_build_chamfered_base_parts(profile, thickness))
         return TagMeshes(layout=layout, base_mesh=base_mesh, text_mesh=trimesh.Trimesh())
 
-    B_top = profile.chamfer_polygon
-    safe_top = B_top.buffer(-1e-3)
     T_cut = _clean_geom(so.unary_union(cut_parts).intersection(safe_top))
     if T_cut.is_empty:
         base_mesh = _combine_mesh_parts(_build_chamfered_base_parts(profile, thickness))
@@ -1035,14 +1073,7 @@ def build_tag_meshes(layout: TagLayout) -> TagMeshes:
 
     text_z_min = max(profile.chamfer_mm + 0.1, thickness - TEXT_THICKNESS)
     text_mesh = _extrude_geom_range(T_cut, text_z_min, thickness)
-
-    R = B_top.difference(T_cut).buffer(0)
-    pocket_geom = B_top.difference(R).buffer(0)
-
-    b_parts = _build_chamfered_base_parts(profile, thickness, top_cap_geom=R)
-    b_parts.extend(_build_geom_walls(pocket_geom, text_z_min, thickness, invert=True))
-    b_parts.append(_build_cap(pocket_geom, text_z_min, flip_normal=False))
-    base_mesh = _combine_mesh_parts(b_parts)
+    base_mesh = _build_pocketed_base(profile, thickness, T_cut, text_z_min)
 
     return TagMeshes(layout=layout, base_mesh=base_mesh, text_mesh=text_mesh)
 
