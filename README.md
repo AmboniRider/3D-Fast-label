@@ -54,6 +54,32 @@ uv sync
 .venv\Scripts\python.exe app.py
 ```
 
+## Aggiornamento da GitHub
+
+### Se hai clonato il repository con Git
+
+Apri PowerShell nella cartella del progetto ed esegui:
+
+```powershell
+git pull origin main
+uv sync
+```
+
+Poi avvia normalmente l'app con doppio clic su **`avvia.bat`** (o `.venv\Scripts\python.exe app.py`).
+
+> Se hai modificato file localmente e `git pull` segnala conflitti, puoi ripristinare la copia esattamente all'ultima versione su GitHub con:
+>
+> ```powershell
+> git fetch origin
+> git reset --hard origin/main
+> uv sync
+> ```
+
+### Se hai scaricato il progetto come ZIP (senza Git)
+
+1. Scarica l'ultima versione da GitHub (**Code → Download ZIP**) ed estrai i file sostituendo quelli nella cartella del progetto.
+2. Esegui `uv sync` da terminale nella cartella del progetto (oppure elimina la cartella `.venv` e fai doppio clic su **`avvia.bat`** per ricreare l'ambiente aggiornato).
+
 ## Istruzioni d'uso
 
 1. **Etichetta Singola**:
