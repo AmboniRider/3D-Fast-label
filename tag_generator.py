@@ -1,13 +1,15 @@
 """
-Generatore 3D per etichette/targhette multi-colore basato sui modelli MakerLab NamePlate V1.1:
-- San_P_0: targhetta verticale a pillola (default 25 x 70 mm) con foro superiore e testo verticale.
-- San_P_1: targhetta rettangolare arrotondata orizzontale (default 80 x 51 mm) con foro in alto a sinistra e testo orizzontale.
+Generatore 3D per etichette/targhette multi-colore basato sui modelli STEP di riferimento:
+- pill: targhetta verticale a pillola (default 25 x 75 mm, spessore 1.8 mm) con foro superiore e testo verticale.
+- rectangular: targhetta rettangolare arrotondata orizzontale (default 80 x 50 mm, spessore 1.6 mm) con foro in alto a sinistra e testo orizzontale.
+- round: targhetta circolare (default Ø 35 mm, spessore 1.6 mm) con foro superiore, bordino opzionale e testo orizzontale.
 
 Caratteristiche principali:
-- Spessori fedeli ai modelli forniti: base 1.0 mm, testo 0.6 mm.
-- Modalita' di rilievo selezionabile per entrambi i modelli:
-  * "flush" (a filo 0.4..1.0 mm, stampata face-down con sottrazione geometrica 2.5D dalla base)
-  * "raised" (in rilievo 1.0..1.6 mm sopra la base, stampata rivolta verso l'alto)
+- Geometrie parametriche fedeli ai file STEP in modelli/ con smussi 0.2 mm x 45° su entrambe le facce (esterno e foro).
+- Spessore base regolabile per modello (±0.6 mm rispetto al default STEP, passo 0.2 mm) e spessore testo 0.6 mm.
+- Modalita' di rilievo selezionabile per tutti i modelli:
+  * "flush" (a filo T-0.6..T, stampata face-down con sottrazione geometrica 2.5D dalla base)
+  * "raised" (in rilievo T..T+0.6 sopra la base, stampata rivolta verso l'alto)
 - Adattamento automatico della dimensione del testo all'area utile (singola o multi-riga).
 - Esportazione in .3mf multi-colore (Bambu Studio / OrcaSlicer) e in 2 file .stl separati.
 """
@@ -35,23 +37,21 @@ from fontTools.pens.basePen import BasePen
 from fontTools.ttLib import TTFont
 from PIL import Image, ImageDraw
 
-TOTAL_THICKNESS = 1.0
 TEXT_THICKNESS = 0.6
-TEXT_Z_MIN = TOTAL_THICKNESS - TEXT_THICKNESS  # 0.4 mm (flush)
-TEXT_Z_MAX = TOTAL_THICKNESS                   # 1.0 mm (flush)
-RAISED_Z_MIN = TOTAL_THICKNESS                 # 1.0 mm (raised)
-RAISED_Z_MAX = TOTAL_THICKNESS + TEXT_THICKNESS  # 1.6 mm (raised)
-BORDER_RAISED_Z_MAX = TOTAL_THICKNESS + 0.4      # 1.4 mm (bordino San_P_2 in rilievo)
+CHAMFER_MM = 0.2
+BORDER_RAISED_HEIGHT = 0.4  # bordino circolare opzionale in rilievo sopra la base
+THICKNESS_STEP_MM = 0.2
 
-# Parametri geometrici estratti dai modelli di riferimento
-SAN0_HOLE_RIM_MM = 3.292915  # 12.0212 - 8.7283
-SAN1_CORNER_RADIUS_MM = 2.0
-SAN1_HOLE_RADIUS_MM = 4.0
-SAN1_HOLE_OFFSET_LEFT_MM = 6.6441
-SAN1_HOLE_OFFSET_TOP_MM = 7.0172
-SAN2_HOLE_RADIUS_MM = 2.5
-SAN2_HOLE_OFFSET_TOP_MM = 6.5  # 17.5 - 11.0
-SAN2_BORDER_WIDTH_MM = 1.0
+# Parametri geometrici estratti dai nuovi modelli STEP in modelli/
+PILL_HOLE_RIM_MM = 4.0       # 12.5 - 8.5 (foro Ø 17.0 mm a larghezza 25 mm)
+RECT_CORNER_RADIUS_MM = 5.0
+RECT_HOLE_RADIUS_MM = 2.5    # Ø 5.0 mm
+RECT_HOLE_OFFSET_LEFT_MM = 6.0
+RECT_HOLE_OFFSET_TOP_MM = 6.0
+ROUND_HOLE_RADIUS_MM = 2.5   # Ø 5.0 mm
+ROUND_HOLE_OFFSET_TOP_MM = 5.5  # 17.5 - 12.0
+ROUND_BORDER_WIDTH_MM = 1.0
+ROUND_BORDER_INSET_MM = CHAMFER_MM + 0.05  # rientro dopo lo smusso 0.2 mm
 
 DEFAULT_BASE_COLOR = "#FDE68A"
 DEFAULT_TEXT_COLOR = "#000000"
@@ -80,64 +80,80 @@ class ModelSpec:
     default_height_mm: float
     min_height_mm: float
     max_height_mm: float
+    default_thickness_mm: float
+    min_thickness_mm: float
+    max_thickness_mm: float
     default_base_color: str
     default_text_color: str
     default_relief_mode: str  # "flush" | "raised"
     text_orientation: str     # "vertical" | "horizontal"
     single_dimension: bool = False
     supports_border: bool = False
+    default_include_border: bool = False
+    chamfer_mm: float = CHAMFER_MM
 
 
 MODEL_SPECS: dict[str, ModelSpec] = {
-    "san_p_0": ModelSpec(
-        model_id="san_p_0",
-        display_name="San_P_0 — Pillola verticale (70×25 mm)",
+    "pill": ModelSpec(
+        model_id="pill",
+        display_name="Pillola verticale (75×25 mm)",
         default_width_mm=25.0,
         min_width_mm=20.0,
         max_width_mm=30.0,
-        default_height_mm=70.0,
-        min_height_mm=60.0,
-        max_height_mm=80.0,
+        default_height_mm=75.0,
+        min_height_mm=65.0,
+        max_height_mm=85.0,
+        default_thickness_mm=1.8,
+        min_thickness_mm=1.2,
+        max_thickness_mm=2.4,
         default_base_color=DEFAULT_BASE_COLOR,
         default_text_color=DEFAULT_TEXT_COLOR,
         default_relief_mode="flush",
         text_orientation="vertical",
     ),
-    "san_p_1": ModelSpec(
-        model_id="san_p_1",
-        display_name="San_P_1 — Rettangolare orizzontale (51×80 mm)",
+    "rectangular": ModelSpec(
+        model_id="rectangular",
+        display_name="Rettangolare orizzontale (50×80 mm)",
         default_width_mm=80.0,
         min_width_mm=70.0,
         max_width_mm=90.0,
-        default_height_mm=51.0,
-        min_height_mm=41.0,
-        max_height_mm=61.0,
+        default_height_mm=50.0,
+        min_height_mm=40.0,
+        max_height_mm=60.0,
+        default_thickness_mm=1.6,
+        min_thickness_mm=1.0,
+        max_thickness_mm=2.2,
         default_base_color=DEFAULT_BASE_COLOR,
         default_text_color=DEFAULT_TEXT_COLOR,
         default_relief_mode="raised",
         text_orientation="horizontal",
     ),
-    "san_p_2": ModelSpec(
-        model_id="san_p_2",
-        display_name="San_P_2 — Circolare (Ø 35 mm)",
+    "round": ModelSpec(
+        model_id="round",
+        display_name="Circolare (Ø 35 mm)",
         default_width_mm=35.0,
         min_width_mm=30.0,
         max_width_mm=40.0,
         default_height_mm=35.0,
         min_height_mm=30.0,
         max_height_mm=40.0,
+        default_thickness_mm=1.6,
+        min_thickness_mm=1.0,
+        max_thickness_mm=2.2,
         default_base_color=DEFAULT_BASE_COLOR,
         default_text_color=DEFAULT_TEXT_COLOR,
         default_relief_mode="raised",
         text_orientation="horizontal",
         single_dimension=True,
         supports_border=True,
+        default_include_border=False,
     ),
 }
 
-DEFAULT_MODEL_ID = "san_p_0"
+DEFAULT_MODEL_ID = "pill"
 DEFAULT_WIDTH_MM = MODEL_SPECS[DEFAULT_MODEL_ID].default_width_mm
 DEFAULT_HEIGHT_MM = MODEL_SPECS[DEFAULT_MODEL_ID].default_height_mm
+DEFAULT_THICKNESS_MM = MODEL_SPECS[DEFAULT_MODEL_ID].default_thickness_mm
 MIN_WIDTH_MM = MODEL_SPECS[DEFAULT_MODEL_ID].min_width_mm
 MAX_WIDTH_MM = MODEL_SPECS[DEFAULT_MODEL_ID].max_width_mm
 MIN_HEIGHT_MM = MODEL_SPECS[DEFAULT_MODEL_ID].min_height_mm
@@ -152,6 +168,18 @@ class FontInfo:
 
 
 @dataclass
+class BaseProfile:
+    """Profili 2D analitici con corrispondenza 1-a-1 tra sagoma piena e facce smussate."""
+    full_polygon: sg.Polygon
+    chamfer_polygon: sg.Polygon
+    outer_full: np.ndarray
+    hole_full: np.ndarray
+    outer_chamf: np.ndarray
+    hole_chamf: np.ndarray
+    chamfer_mm: float = CHAMFER_MM
+
+
+@dataclass
 class TagLayout:
     text: str
     lines: list[str]
@@ -162,11 +190,14 @@ class TagLayout:
     line_height_mm: float
     width_mm: float = DEFAULT_WIDTH_MM
     height_mm: float = DEFAULT_HEIGHT_MM
+    thickness_mm: float = DEFAULT_THICKNESS_MM
+    chamfer_mm: float = CHAMFER_MM
     model_id: str = DEFAULT_MODEL_ID
     relief_mode: str = "flush"
     align: str = "center"
     border_polygon: sg.base.BaseGeometry = field(default_factory=sg.GeometryCollection)
     include_border: bool = False
+    base_profile: BaseProfile | None = None
 
 
 @dataclass
@@ -449,83 +480,151 @@ def _build_multiline_unit(
     return geom_out, avg_cap
 
 
-def build_base_polygon(
+def _circle_ring(cx: float, cy: float, radius: float, n_pts: int) -> np.ndarray:
+    angles = np.linspace(0.0, 2.0 * np.pi, n_pts, endpoint=False)
+    return np.column_stack([cx + radius * np.cos(angles), cy + radius * np.sin(angles)])
+
+
+def _pill_outer_ring(r_outer: float, cy_cap: float, n_arc: int = 65) -> np.ndarray:
+    angles_bot = np.linspace(np.pi, 2.0 * np.pi, n_arc)
+    angles_top = np.linspace(0.0, np.pi, n_arc)
+    bot = np.column_stack([r_outer * np.cos(angles_bot), -cy_cap + r_outer * np.sin(angles_bot)])
+    top = np.column_stack([r_outer * np.cos(angles_top), cy_cap + r_outer * np.sin(angles_top)])
+    return np.vstack([bot, top])
+
+
+def _rounded_rect_outer_ring(w: float, h: float, r_base: float, r_offset: float, n_corner: int = 17) -> np.ndarray:
+    """
+    Costruisce l'anello esterno CCW di un rettangolo arrotondato con centri degli archi fissi
+    a (±(w/2 - r_base), ±(h/2 - r_base)) e raggio `r_offset` (= r_base oppure r_base - chamfer).
+    """
+    hx = w * 0.5 - r_base
+    hy = h * 0.5 - r_base
+    corners = [
+        (hx, -hy, -0.5 * np.pi, 0.0),
+        (hx, hy, 0.0, 0.5 * np.pi),
+        (-hx, hy, 0.5 * np.pi, np.pi),
+        (-hx, -hy, np.pi, 1.5 * np.pi),
+    ]
+    segs = []
+    for cx, cy, a0, a1 in corners:
+        ang = np.linspace(a0, a1, n_corner)
+        segs.append(np.column_stack([cx + r_offset * np.cos(ang), cy + r_offset * np.sin(ang)]))
+    return np.vstack(segs)
+
+
+def build_base_profile(
     width_mm: float = DEFAULT_WIDTH_MM,
     height_mm: float = DEFAULT_HEIGHT_MM,
     model_id: str = DEFAULT_MODEL_ID,
-    include_border: bool = True,
-) -> tuple[sg.Polygon, sg.base.BaseGeometry, sg.base.BaseGeometry, float, float]:
+    include_border: bool = False,
+) -> tuple[BaseProfile, sg.base.BaseGeometry, sg.base.BaseGeometry, float, float]:
     """
-    Costruisce la sagoma 2D parametrica del modello scelto (`san_p_0`, `san_p_1` o `san_p_2`).
-    Restituisce (poligono_base, clip_area_utile, poligono_bordino, width_clamped, height_clamped).
+    Costruisce il profilo 2D analitico del modello scelto (`pill`, `rectangular` o `round`),
+    includendo sia la sagoma piena che la faccia piana smussata a 45° con corrispondenza 1-a-1.
+    Restituisce (BaseProfile, clip_area_utile, poligono_bordino, width_clamped, height_clamped).
     """
     spec = get_model_spec(model_id)
     w = float(np.clip(width_mm, spec.min_width_mm, spec.max_width_mm))
     h = float(np.clip(height_mm, spec.min_height_mm, spec.max_height_mm))
+    c = spec.chamfer_mm
     empty_border = sg.GeometryCollection()
 
-    if model_id == "san_p_0":
+    if model_id == "pill":
         r_outer = w * 0.5
         cy_cap = h * 0.5 - r_outer
-        angles_bot = np.linspace(np.pi, 2.0 * np.pi, 65)
-        bot_pts = [(r_outer * float(np.cos(a)), -cy_cap + r_outer * float(np.sin(a))) for a in angles_bot]
-        angles_top = np.linspace(0.0, np.pi, 65)
-        top_pts = [(r_outer * float(np.cos(a)), cy_cap + r_outer * float(np.sin(a))) for a in angles_top]
-        outer_pts = bot_pts + top_pts
+        r_hole = max(1.0, r_outer - PILL_HOLE_RIM_MM)
 
-        r_hole = max(1.0, r_outer - SAN0_HOLE_RIM_MM)
-        hole_angles = np.linspace(0.0, 2.0 * np.pi, 64, endpoint=False)
-        hole_pts = [(r_hole * float(np.cos(a)), cy_cap + r_hole * float(np.sin(a))) for a in hole_angles]
-        hole_bottom_y = cy_cap - r_hole
+        outer_full = _pill_outer_ring(r_outer, cy_cap, n_arc=65)
+        outer_chamf = _pill_outer_ring(r_outer - c, cy_cap, n_arc=65)
+        hole_full = _circle_ring(0.0, cy_cap, r_hole, 64)
+        hole_chamf = _circle_ring(0.0, cy_cap, r_hole + c, 64)
 
-        poly = sg.Polygon(outer_pts, [hole_pts]).buffer(0)
+        full_poly = sg.Polygon(outer_full, [hole_full])
+        chamf_poly = sg.Polygon(outer_chamf, [hole_chamf])
+        profile = BaseProfile(full_poly, chamf_poly, outer_full, hole_full, outer_chamf, hole_chamf, c)
+
+        hole_bottom_y = cy_cap - (r_hole + c)
         clip_box = sg.box(-w, -h, w, hole_bottom_y)
-        return poly, clip_box, empty_border, w, h
+        return profile, clip_box, empty_border, w, h
 
-    if model_id == "san_p_2":
+    if model_id == "round":
         d = w
         h = d
         r_outer = d * 0.5
-        outer_circle = sg.Point(0.0, 0.0).buffer(r_outer, quad_segs=32)
-        hole_cy = r_outer - SAN2_HOLE_OFFSET_TOP_MM
-        hole_poly = sg.Point(0.0, hole_cy).buffer(SAN2_HOLE_RADIUS_MM, quad_segs=16)
-        poly = outer_circle.difference(hole_poly).buffer(0)
+        hole_cy = r_outer - ROUND_HOLE_OFFSET_TOP_MM
 
-        hole_bottom_y = hole_cy - SAN2_HOLE_RADIUS_MM
+        outer_full = _circle_ring(0.0, 0.0, r_outer, 128)
+        outer_chamf = _circle_ring(0.0, 0.0, r_outer - c, 128)
+        hole_full = _circle_ring(0.0, hole_cy, ROUND_HOLE_RADIUS_MM, 64)
+        hole_chamf = _circle_ring(0.0, hole_cy, ROUND_HOLE_RADIUS_MM + c, 64)
+
+        full_poly = sg.Polygon(outer_full, [hole_full])
+        chamf_poly = sg.Polygon(outer_chamf, [hole_chamf])
+        profile = BaseProfile(full_poly, chamf_poly, outer_full, hole_full, outer_chamf, hole_chamf, c)
+
+        hole_bottom_y = hole_cy - (ROUND_HOLE_RADIUS_MM + c)
         if include_border:
-            inner_circle = sg.Point(0.0, 0.0).buffer(r_outer - SAN2_BORDER_WIDTH_MM, quad_segs=32)
-            border_poly = outer_circle.difference(inner_circle).buffer(0)
-            clip_region = inner_circle.intersection(sg.box(-d, -d, d, hole_bottom_y)).buffer(0)
+            r_b_out = r_outer - ROUND_BORDER_INSET_MM
+            r_b_in = r_b_out - ROUND_BORDER_WIDTH_MM
+            b_outer_circle = sg.Point(0.0, 0.0).buffer(r_b_out, quad_segs=32)
+            b_inner_circle = sg.Point(0.0, 0.0).buffer(r_b_in, quad_segs=32)
+            border_poly = b_outer_circle.difference(b_inner_circle).buffer(0)
+            clip_region = b_inner_circle.intersection(sg.box(-d, -d, d, hole_bottom_y)).buffer(0)
         else:
             border_poly = empty_border
             clip_region = sg.box(-d, -d, d, hole_bottom_y)
-        return poly, clip_region, border_poly, d, d
+        return profile, clip_region, border_poly, d, d
 
-    # san_p_1: rettangolo con angoli arrotondati (r=2 mm) e foro in alto a sinistra (r=4 mm)
-    r_corner = SAN1_CORNER_RADIUS_MM
-    outer_poly = sg.box(-w * 0.5 + r_corner, -h * 0.5 + r_corner, w * 0.5 - r_corner, h * 0.5 - r_corner).buffer(
-        r_corner, quad_segs=16
-    )
-    hole_cx = -w * 0.5 + SAN1_HOLE_OFFSET_LEFT_MM
-    hole_cy = h * 0.5 - SAN1_HOLE_OFFSET_TOP_MM
-    hole_poly = sg.Point(hole_cx, hole_cy).buffer(SAN1_HOLE_RADIUS_MM, quad_segs=16)
-    poly = outer_poly.difference(hole_poly).buffer(0)
+    # rectangular: rettangolo arrotondato (r=5 mm) e foro Ø 5 mm in alto a sinistra a 6x6 mm
+    r_corner = RECT_CORNER_RADIUS_MM
+    hole_cx = -w * 0.5 + RECT_HOLE_OFFSET_LEFT_MM
+    hole_cy = h * 0.5 - RECT_HOLE_OFFSET_TOP_MM
 
-    hole_right_x = hole_cx + SAN1_HOLE_RADIUS_MM
+    outer_full = _rounded_rect_outer_ring(w, h, r_corner, r_corner, n_corner=17)
+    outer_chamf = _rounded_rect_outer_ring(w, h, r_corner, r_corner - c, n_corner=17)
+    hole_full = _circle_ring(hole_cx, hole_cy, RECT_HOLE_RADIUS_MM, 64)
+    hole_chamf = _circle_ring(hole_cx, hole_cy, RECT_HOLE_RADIUS_MM + c, 64)
+
+    full_poly = sg.Polygon(outer_full, [hole_full])
+    chamf_poly = sg.Polygon(outer_chamf, [hole_chamf])
+    profile = BaseProfile(full_poly, chamf_poly, outer_full, hole_full, outer_chamf, hole_chamf, c)
+
+    hole_right_x = hole_cx + (RECT_HOLE_RADIUS_MM + c)
     clip_box = sg.box(hole_right_x, -h, w, h)
-    return poly, clip_box, empty_border, w, h
+    return profile, clip_box, empty_border, w, h
+
+
+def build_base_polygon(
+    width_mm: float = DEFAULT_WIDTH_MM,
+    height_mm: float = DEFAULT_HEIGHT_MM,
+    model_id: str = DEFAULT_MODEL_ID,
+    include_border: bool = False,
+) -> tuple[sg.Polygon, sg.base.BaseGeometry, sg.base.BaseGeometry, float, float]:
+    """Wrapper di compatibilita' che restituisce il solo poligono pieno."""
+    profile, clip_region, border_poly, w, h = build_base_profile(
+        width_mm=width_mm,
+        height_mm=height_mm,
+        model_id=model_id,
+        include_border=include_border,
+    )
+    return profile.full_polygon, clip_region, border_poly, w, h
 
 
 def compute_usable_polygon(
     base_polygon: sg.Polygon,
     clip_region: sg.base.BaseGeometry,
     margin_mm: float = DEFAULT_MARGIN_MM,
+    chamfer_polygon: sg.Polygon | None = None,
 ) -> sg.base.BaseGeometry:
-    """Calcola l'area utile rispettando il margine da bordo esterno, foro e zona sicura."""
-    margin_mm = max(0.3, min(margin_mm, 8.0))
+    """Calcola l'area utile rispettando il margine da bordo esterno, smusso, foro e zona sicura."""
+    margin_mm = max(0.5, min(margin_mm, 8.0))
     shrunk_base = base_polygon.buffer(-margin_mm)
     shrunk_clip = clip_region.buffer(-margin_mm)
-    return shrunk_base.intersection(shrunk_clip).buffer(0)
+    usable = shrunk_base.intersection(shrunk_clip)
+    if chamfer_polygon is not None:
+        usable = usable.intersection(chamfer_polygon.buffer(-0.2))
+    return usable.buffer(0)
 
 
 def _wrap_words_into_k_lines(words: list[str], k: int) -> list[str]:
@@ -570,7 +669,7 @@ def _place_scaled_text(
     scaled = sa.scale(unit_geom, xfact=scale, yfact=scale, origin=(0.0, 0.0))
     sminx, sminy, smaxx, smaxy = scaled.bounds
 
-    if model_id == "san_p_2" and orientation == "horizontal":
+    if model_id == "round" and orientation == "horizontal":
         # Sul disco circolare centra a Y=0 finche' non tocca il margine del foro, poi scende quanto basta
         half_h = (smaxy - sminy) * 0.5
         mid_y = (sminy + smaxy) * 0.5
@@ -631,42 +730,62 @@ def compute_tag_layout(
     line_spacing: float = 1.15,
     width_mm: float | None = None,
     height_mm: float | None = None,
+    thickness_mm: float | None = None,
     model_id: str = DEFAULT_MODEL_ID,
     relief_mode: str | None = None,
     align: str = "center",
-    include_border: bool = True,
+    include_border: bool = False,
 ) -> TagLayout:
     """Calcola layout, eventuale a capo automatico e dimensione ottimale del testo."""
     spec = get_model_spec(model_id)
     w_req = spec.default_width_mm if width_mm is None else width_mm
     h_req = spec.default_height_mm if height_mm is None else height_mm
+    t_req = spec.default_thickness_mm if thickness_mm is None else thickness_mm
+    t_clamped = round(float(np.clip(t_req, spec.min_thickness_mm, spec.max_thickness_mm)), 2)
     relief = relief_mode if relief_mode in ("flush", "raised") else spec.default_relief_mode
     align_norm = align if align in ("center", "left") else "center"
     use_border = bool(include_border and spec.supports_border)
 
-    base_poly, clip_region, border_poly, w_clamped, h_clamped = build_base_polygon(
+    profile, clip_region, border_poly, w_clamped, h_clamped = build_base_profile(
         w_req, h_req, model_id=model_id, include_border=use_border
     )
-    usable = compute_usable_polygon(base_poly, clip_region, margin_mm)
+    base_poly = profile.full_polygon
+    usable = compute_usable_polygon(
+        base_poly,
+        clip_region,
+        margin_mm,
+        chamfer_polygon=profile.chamfer_polygon,
+    )
     raw = text.replace("\r\n", "\n").strip("\n")
 
-    if not raw.strip():
+    def _make_layout(
+        lines: list[str],
+        text_poly: sg.base.BaseGeometry,
+        font_scale: float,
+        line_h: float,
+    ) -> TagLayout:
         return TagLayout(
             text=text,
-            lines=[],
+            lines=lines,
             base_polygon=base_poly,
             usable_polygon=usable,
-            text_polygon=sg.GeometryCollection(),
-            font_scale_mm=0.0,
-            line_height_mm=0.0,
+            text_polygon=text_poly,
+            font_scale_mm=font_scale,
+            line_height_mm=line_h,
             width_mm=w_clamped,
             height_mm=h_clamped,
+            thickness_mm=t_clamped,
+            chamfer_mm=profile.chamfer_mm,
             model_id=model_id,
             relief_mode=relief,
             align=align_norm,
             border_polygon=border_poly,
             include_border=use_border,
+            base_profile=profile,
         )
+
+    if not raw.strip():
+        return _make_layout([], sg.GeometryCollection(), 0.0, 0.0)
 
     manual_lines = [ln.strip() for ln in raw.split("\n") if ln.strip()]
 
@@ -676,22 +795,7 @@ def compute_tag_layout(
             lines, font_path, font_number, spec.text_orientation, align_norm, line_spacing
         )
         fitted, scale = _fit_unit_geometry(unit_geom, usable, spec.text_orientation, align_norm, model_id)
-        return TagLayout(
-            text=text,
-            lines=lines,
-            base_polygon=base_poly,
-            usable_polygon=usable,
-            text_polygon=fitted,
-            font_scale_mm=scale,
-            line_height_mm=scale * avg_cap,
-            width_mm=w_clamped,
-            height_mm=h_clamped,
-            model_id=model_id,
-            relief_mode=relief,
-            align=align_norm,
-            border_polygon=border_poly,
-            include_border=use_border,
-        )
+        return _make_layout(lines, fitted, scale, scale * avg_cap)
 
     single_line = manual_lines[0]
     unit1, cap1 = _build_multiline_unit(
@@ -702,22 +806,7 @@ def compute_tag_layout(
 
     words = single_line.split()
     if height1 >= AUTO_WRAP_MIN_LINE_HEIGHT_MM or len(words) <= 1:
-        return TagLayout(
-            text=text,
-            lines=[single_line],
-            base_polygon=base_poly,
-            usable_polygon=usable,
-            text_polygon=fit1,
-            font_scale_mm=scale1,
-            line_height_mm=height1,
-            width_mm=w_clamped,
-            height_mm=h_clamped,
-            model_id=model_id,
-            relief_mode=relief,
-            align=align_norm,
-            border_polygon=border_poly,
-            include_border=use_border,
-        )
+        return _make_layout([single_line], fit1, scale1, height1)
 
     best_lines = [single_line]
     best_fit = fit1
@@ -740,22 +829,7 @@ def compute_tag_layout(
             best_scale = scale_k
             best_height = height_k
 
-    return TagLayout(
-        text=text,
-        lines=best_lines,
-        base_polygon=base_poly,
-        usable_polygon=usable,
-        text_polygon=best_fit,
-        font_scale_mm=best_scale,
-        line_height_mm=best_height,
-        width_mm=w_clamped,
-        height_mm=h_clamped,
-        model_id=model_id,
-        relief_mode=relief,
-        align=align_norm,
-        border_polygon=border_poly,
-        include_border=use_border,
-    )
+    return _make_layout(best_lines, best_fit, best_scale, best_height)
 
 
 def _geom_to_polys(geom: sg.base.BaseGeometry) -> list[sg.Polygon]:
@@ -807,26 +881,41 @@ def _build_cap(geom: sg.base.BaseGeometry, z: float, flip_normal: bool) -> tuple
     return verts_3d, faces
 
 
-def _build_walls(ring_coords, z0: float, z1: float, outward_ccw: bool) -> tuple[np.ndarray, np.ndarray]:
-    pts = np.asarray(ring_coords)[:, :2]
-    if len(pts) > 1 and np.allclose(pts[0], pts[-1]):
-        pts = pts[:-1]
-    n = len(pts)
-    if n < 3:
+def _build_loft_band(
+    ring0,
+    z0: float,
+    ring1,
+    z1: float,
+    outward_ccw: bool,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Collega due anelli chiusi 2D con corrispondenza 1-a-1 tra quota `z0` e `z1` (parete o smusso)."""
+    pts0 = np.asarray(ring0, dtype=np.float64)[:, :2]
+    pts1 = np.asarray(ring1, dtype=np.float64)[:, :2]
+    if len(pts0) > 1 and np.allclose(pts0[0], pts0[-1]):
+        pts0 = pts0[:-1]
+    if len(pts1) > 1 and np.allclose(pts1[0], pts1[-1]):
+        pts1 = pts1[:-1]
+    n = len(pts0)
+    if n < 3 or len(pts1) != n:
         return np.zeros((0, 3)), np.zeros((0, 3), dtype=np.int64)
-    x, y = pts[:, 0], pts[:, 1]
+    x, y = pts0[:, 0], pts0[:, 1]
     area2 = np.sum(x * np.roll(y, -1) - np.roll(x, -1) * y)
     is_ccw = area2 > 0
     if is_ccw != outward_ccw:
-        pts = pts[::-1]
-    v_bot = np.column_stack([pts, np.full(n, z0)])
-    v_top = np.column_stack([pts, np.full(n, z1)])
+        pts0 = pts0[::-1]
+        pts1 = pts1[::-1]
+    v_bot = np.column_stack([pts0, np.full(n, z0)])
+    v_top = np.column_stack([pts1, np.full(n, z1)])
     verts = np.vstack([v_bot, v_top])
     idx = np.arange(n, dtype=np.int64)
     nxt = (idx + 1) % n
     f1 = np.column_stack([idx, nxt, n + nxt])
     f2 = np.column_stack([idx, n + nxt, n + idx])
     return verts, np.vstack([f1, f2])
+
+
+def _build_walls(ring_coords, z0: float, z1: float, outward_ccw: bool) -> tuple[np.ndarray, np.ndarray]:
+    return _build_loft_band(ring_coords, z0, ring_coords, z1, outward_ccw)
 
 
 def _combine_mesh_parts(parts: Iterable[tuple[np.ndarray, np.ndarray]]) -> trimesh.Trimesh:
@@ -854,12 +943,42 @@ def _extrude_geom_range(geom: sg.base.BaseGeometry, z0: float, z1: float) -> tri
     return _combine_mesh_parts(parts)
 
 
-def _build_geom_walls(geom: sg.base.BaseGeometry, z0: float, z1: float) -> list[tuple[np.ndarray, np.ndarray]]:
+def _build_geom_walls(
+    geom: sg.base.BaseGeometry,
+    z0: float,
+    z1: float,
+    invert: bool = False,
+) -> list[tuple[np.ndarray, np.ndarray]]:
     parts: list[tuple[np.ndarray, np.ndarray]] = []
     for p in _geom_to_polys(geom):
-        parts.append(_build_walls(p.exterior.coords, z0, z1, outward_ccw=True))
+        parts.append(_build_walls(p.exterior.coords, z0, z1, outward_ccw=not invert))
         for h in p.interiors:
-            parts.append(_build_walls(h.coords, z0, z1, outward_ccw=False))
+            parts.append(_build_walls(h.coords, z0, z1, outward_ccw=invert))
+    return parts
+
+
+def _build_chamfered_base_parts(
+    profile: BaseProfile,
+    thickness_mm: float,
+    top_cap_geom: sg.base.BaseGeometry | None = None,
+) -> list[tuple[np.ndarray, np.ndarray]]:
+    """Costruisce la base con smussi 45° sopra e sotto (esterno + foro) garantendo chiusura watertight."""
+    c = min(profile.chamfer_mm, thickness_mm * 0.4)
+    top_geom = profile.chamfer_polygon if top_cap_geom is None else top_cap_geom
+    parts: list[tuple[np.ndarray, np.ndarray]] = [
+        _build_cap(profile.chamfer_polygon, 0.0, flip_normal=True),
+    ]
+    if c > 1e-6:
+        parts.append(_build_loft_band(profile.outer_chamf, 0.0, profile.outer_full, c, outward_ccw=True))
+        parts.append(_build_loft_band(profile.hole_chamf, 0.0, profile.hole_full, c, outward_ccw=False))
+        parts.append(_build_loft_band(profile.outer_full, c, profile.outer_full, thickness_mm - c, outward_ccw=True))
+        parts.append(_build_loft_band(profile.hole_full, c, profile.hole_full, thickness_mm - c, outward_ccw=False))
+        parts.append(_build_loft_band(profile.outer_full, thickness_mm - c, profile.outer_chamf, thickness_mm, outward_ccw=True))
+        parts.append(_build_loft_band(profile.hole_full, thickness_mm - c, profile.hole_chamf, thickness_mm, outward_ccw=False))
+    else:
+        parts.append(_build_loft_band(profile.outer_full, 0.0, profile.outer_full, thickness_mm, outward_ccw=True))
+        parts.append(_build_loft_band(profile.hole_full, 0.0, profile.hole_full, thickness_mm, outward_ccw=False))
+    parts.append(_build_cap(top_geom, thickness_mm, flip_normal=False))
     return parts
 
 
@@ -874,53 +993,65 @@ def _clean_geom(geom: sg.base.BaseGeometry) -> sg.base.BaseGeometry:
 
 def build_tag_meshes(layout: TagLayout) -> TagMeshes:
     """
-    Genera le 2 mesh 3D non sovrapposte e chiuse (watertight):
-    - Modalita' "flush": base Z in [0.0, 1.0] con sede incassata Z in [0.4, 1.0]; testo/bordo Z in [0.4, 1.0].
-    - Modalita' "raised": base piena Z in [0.0, 1.0]; testo in rilievo Z in [1.0, 1.6] (+ bordino Z in [1.0, 1.4]).
+    Genera le 2 mesh 3D non sovrapposte e chiuse (watertight) con smussi 0.2 mm x 45°:
+    - Modalita' "flush": base Z in [0.0, T] con sede incassata Z in [T-0.6, T]; testo/bordo Z in [T-0.6, T].
+    - Modalita' "raised": base piena Z in [0.0, T]; testo in rilievo Z in [T, T+0.6] (+ bordino Z in [T, T+0.4]).
     """
-    B = layout.base_polygon.buffer(0)
+    thickness = float(layout.thickness_mm)
+    profile = layout.base_profile
+    if profile is None:
+        profile, _, _, _, _ = build_base_profile(
+            width_mm=layout.width_mm,
+            height_mm=layout.height_mm,
+            model_id=layout.model_id,
+            include_border=layout.include_border,
+        )
+
     T = _clean_geom(layout.text_polygon)
     B_rim = _clean_geom(layout.border_polygon)
 
     if layout.relief_mode == "raised":
-        base_mesh = _extrude_geom_range(B, 0.0, TOTAL_THICKNESS)
+        base_mesh = _combine_mesh_parts(_build_chamfered_base_parts(profile, thickness))
         ext2_meshes: list[trimesh.Trimesh] = []
         if not T.is_empty:
-            ext2_meshes.append(_extrude_geom_range(T, RAISED_Z_MIN, RAISED_Z_MAX))
+            ext2_meshes.append(_extrude_geom_range(T, thickness, thickness + TEXT_THICKNESS))
         if not B_rim.is_empty:
-            ext2_meshes.append(_extrude_geom_range(B_rim, RAISED_Z_MIN, BORDER_RAISED_Z_MAX))
+            ext2_meshes.append(_extrude_geom_range(B_rim, thickness, thickness + BORDER_RAISED_HEIGHT))
         text_mesh = trimesh.util.concatenate(ext2_meshes) if ext2_meshes else trimesh.Trimesh()
         return TagMeshes(layout=layout, base_mesh=base_mesh, text_mesh=text_mesh)
 
-    # Modalita' "flush": testo e eventuale bordino incassati a filo in [0.4, 1.0]
+    # Modalita' "flush": testo e eventuale bordino incassati a filo in [T - 0.6, T]
     cut_parts = [g for g in (T, B_rim) if not g.is_empty]
     if not cut_parts:
-        base_mesh = _extrude_geom_range(B, 0.0, TOTAL_THICKNESS)
+        base_mesh = _combine_mesh_parts(_build_chamfered_base_parts(profile, thickness))
         return TagMeshes(layout=layout, base_mesh=base_mesh, text_mesh=trimesh.Trimesh())
 
-    T_cut = so.unary_union(cut_parts).simplify(1e-6, preserve_topology=True).buffer(0)
-    text_mesh = _extrude_geom_range(T_cut, TEXT_Z_MIN, TEXT_Z_MAX)
+    B_top = profile.chamfer_polygon
+    safe_top = B_top.buffer(-1e-3)
+    T_cut = _clean_geom(so.unary_union(cut_parts).intersection(safe_top))
+    if T_cut.is_empty:
+        base_mesh = _combine_mesh_parts(_build_chamfered_base_parts(profile, thickness))
+        return TagMeshes(layout=layout, base_mesh=base_mesh, text_mesh=trimesh.Trimesh())
 
-    R = B.difference(T_cut).buffer(0)
-    step_geom = B.difference(R).buffer(0)
+    text_z_min = max(profile.chamfer_mm + 0.1, thickness - TEXT_THICKNESS)
+    text_mesh = _extrude_geom_range(T_cut, text_z_min, thickness)
 
-    b_parts: list[tuple[np.ndarray, np.ndarray]] = [
-        _build_cap(B, 0.0, flip_normal=True),
-        *_build_geom_walls(B, 0.0, TEXT_Z_MIN),
-        _build_cap(step_geom, TEXT_Z_MIN, flip_normal=False),
-        *_build_geom_walls(R, TEXT_Z_MIN, TOTAL_THICKNESS),
-        _build_cap(R, TOTAL_THICKNESS, flip_normal=False),
-    ]
+    R = B_top.difference(T_cut).buffer(0)
+    pocket_geom = B_top.difference(R).buffer(0)
+
+    b_parts = _build_chamfered_base_parts(profile, thickness, top_cap_geom=R)
+    b_parts.extend(_build_geom_walls(pocket_geom, text_z_min, thickness, invert=True))
+    b_parts.append(_build_cap(pocket_geom, text_z_min, flip_normal=False))
     base_mesh = _combine_mesh_parts(b_parts)
 
     return TagMeshes(layout=layout, base_mesh=base_mesh, text_mesh=text_mesh)
 
 
-def _to_plate_orientation(mesh: trimesh.Trimesh, relief_mode: str) -> trimesh.Trimesh:
+def _to_plate_orientation(mesh: trimesh.Trimesh, relief_mode: str, thickness_mm: float) -> trimesh.Trimesh:
     """
     Prepara la mesh per il piatto di stampa:
-    - "flush": ruota 180° attorno a Y (-x, y, 1 - z) cosi' il testo a filo poggia sul piatto a Z=0.
-    - "raised": mantiene l'orientamento dritto verso l'alto (base a Z=0, rilievo a Z=1.0..1.6).
+    - "flush": ruota 180° attorno a Y (-x, y, T - z) cosi' il testo a filo poggia sul piatto a Z=0.
+    - "raised": mantiene l'orientamento dritto verso l'alto (base a Z=0, rilievo a Z=T..T+0.6).
     """
     if len(mesh.vertices) == 0:
         return mesh
@@ -928,7 +1059,7 @@ def _to_plate_orientation(mesh: trimesh.Trimesh, relief_mode: str) -> trimesh.Tr
     if relief_mode == "flush":
         v = m.vertices.copy()
         v[:, 0] = -v[:, 0]
-        v[:, 2] = TOTAL_THICKNESS - v[:, 2]
+        v[:, 2] = thickness_mm - v[:, 2]
         m.vertices = v
     return m
 
@@ -940,11 +1071,12 @@ def export_stls(meshes: TagMeshes, out_dir: Path, base_stem: str) -> tuple[Path,
     text_path = out_dir / f"{base_stem}_testo.stl"
 
     relief = meshes.layout.relief_mode
-    base_plate = _to_plate_orientation(meshes.base_mesh, relief)
+    thickness = meshes.layout.thickness_mm
+    base_plate = _to_plate_orientation(meshes.base_mesh, relief, thickness)
     base_plate.export(str(base_path))
 
     if len(meshes.text_mesh.vertices) > 0:
-        text_plate = _to_plate_orientation(meshes.text_mesh, relief)
+        text_plate = _to_plate_orientation(meshes.text_mesh, relief, thickness)
         text_plate.export(str(text_path))
         return base_path, text_path
     return base_path, None
@@ -1028,7 +1160,12 @@ def export_3mf(
     title_str = title or sanitize_filename(meshes.layout.text)
     has_text = len(meshes.text_mesh.vertices) > 0
     relief = meshes.layout.relief_mode
-    build_transform = "-1 0 0 0 1 0 0 0 -1 90 70 1" if relief == "flush" else "1 0 0 0 1 0 0 0 1 90 70 0"
+    thickness = meshes.layout.thickness_mm
+    build_transform = (
+        f"-1 0 0 0 1 0 0 0 -1 90 70 {thickness:.6g}"
+        if relief == "flush"
+        else "1 0 0 0 1 0 0 0 1 90 70 0"
+    )
 
     u_obj = str(uuid.uuid4())
     u_build = str(uuid.uuid4())

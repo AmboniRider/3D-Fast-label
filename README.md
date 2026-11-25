@@ -1,18 +1,18 @@
-# 3D Fast Label (`v1.0 beta`)
+# 3D Fast Label (`v1.1 beta`)
 
-Applicazione desktop in Python per generare targhette/portachiavi personalizzati pronti per la stampa 3D multi-colore, basata sui modelli di riferimento presenti in `modelli/` (`San_P_0`, `San_P_1`, `San_P_2`).
+Applicazione desktop in Python per generare targhette/portachiavi personalizzati pronti per la stampa 3D multi-colore, basata sui modelli STEP di riferimento presenti in `modelli/` (`Targhetta Pill.step`, `Targhetta rectangular.step`, `Targhetta round.step`).
 
 ![Anteprima dell'applicazione](screenshot.png)
 
 ## Funzionalità principali
 
-- **Tre modelli selezionabili**:
-  - **`San_P_0` (Pillola verticale)**: altezza **60–80 mm** (predefinita **70 mm**), larghezza **20–30 mm** (predefinita **25 mm**), foro superiore ad anello e testo verticale.
-  - **`San_P_1` (Rettangolare orizzontale)**: larghezza **70–90 mm** (predefinita **80 mm**), altezza **41–61 mm** (predefinita **51 mm**), angoli arrotondati (`r = 2 mm`), foro in alto a sinistra (`Ø 8 mm`) e testo orizzontale.
-  - **`San_P_2` (Circolare)**: diametro **30–40 mm** (predefinito **35 mm**, variazione `±0.5 cm`), foro superiore (`Ø 5 mm`), bordino circolare esterno opzionale da `1.0 mm` e testo orizzontale.
-- **Due stili di rilievo selezionabili su tutti i modelli**:
-  - **A filo (`0.4–1.0 mm`, *face-down*)**: base `1.0 mm` con sede incassata e testo a filo `0.6 mm` tramite sottrazione geometrica 2.5D senza sovrapposizioni, pronto per stampa capovolta sul piatto.
-  - **In rilievo (`1.0–1.6 mm`)**: base piena `1.0 mm` con testo in rilievo `0.6 mm` sopra la superficie (totale `1.6 mm`).
+- **Tre modelli parametrici selezionabili** (tutti con smussi `0.2 mm × 45°` sopra e sotto su bordo esterno e foro):
+  - **Pillola verticale** (`Targhetta Pill.step`): altezza **65–85 mm** (predefinita **75 mm**), larghezza **20–30 mm** (predefinita **25 mm**), spessore base **1.2–2.4 mm** (predefinito **1.8 mm**), foro superiore ad anello (`Ø 17 mm` con anello robusto da `4.0 mm`) e testo verticale.
+  - **Rettangolare orizzontale** (`Targhetta rectangular.step`): larghezza **70–90 mm** (predefinita **80 mm**), altezza **40–60 mm** (predefinita **50 mm**), spessore base **1.0–2.2 mm** (predefinito **1.6 mm**), angoli arrotondati (`r = 5 mm`), foro in alto a sinistra (`Ø 5 mm` a `6×6 mm`) e testo orizzontale.
+  - **Circolare** (`Targhetta round.step`): diametro **30–40 mm** (predefinito **35 mm**), spessore base **1.0–2.2 mm** (predefinito **1.6 mm**), foro superiore (`Ø 5 mm` a `5.5 mm` dal bordo), bordino circolare esterno opzionale da `1.0 mm` (disattivo di default) e testo orizzontale.
+- **Spessore base regolabile** (`±0.6 mm` rispetto al default STEP, passo `0.2 mm`) e **due stili di rilievo selezionabili su tutti i modelli**:
+  - **A filo (`0.6 mm`, *face-down*)**: base con sede incassata `0.6 mm` (`T-0.6..T`) e testo a filo tramite sottrazione geometrica 2.5D senza sovrapposizioni, pronto per stampa capovolta sul piatto.
+  - **In rilievo (`+0.6 mm`)**: base piena con testo in rilievo `0.6 mm` sopra la superficie (`T..T+0.6`).
 - **Adattamento automatico e allineamento del testo**:
   - Supporto sia a **riga singola** che a **più righe** (a capo manuale con `Invio` oppure automatico se il testo è troppo lungo), con allineamento **Centro** o **Sinistra**.
   - Ridimensionamento automatico al massimo formato leggibile entro il margine configurabile (`1.0–5.0 mm`) dal bordo e dal foro.
@@ -58,7 +58,7 @@ uv sync
 
 1. **Etichetta Singola**:
    - Scrivi il testo nella casella superiore (usa `Invio` per andare a capo manualmente, oppure lascia attiva l'opzione **Auto**).
-   - Regola font, colori, dimensioni (`V` e `O`) e margine nella sezione **Stile e Parametri Modello** osservando l'anteprima in tempo reale a destra.
+   - Regola font, colori, dimensioni (`V`/`O` o `Ø`), spessore base e margine nella sezione **Stile e Parametri Modello** osservando l'anteprima in tempo reale a destra.
    - Clicca **Salva .3MF (Multi-colore)** per ottenere un unico file pronto per Bambu Studio / OrcaSlicer, oppure **Salva 2 .STL (Base + Testo)** / **Salva Entrambi**.
 2. **Generazione Multipla**:
    - Passa alla scheda **Generazione Multipla**, inserisci un testo per riga (o carica un file `.txt`/`.csv`), scegli i formati e la cartella di destinazione, poi clicca **Genera Tutte le Targhette**.
@@ -72,5 +72,5 @@ uv sync
 - `tag_generator.py` — Motore geometrico 2D/3D, estrazione glifi TTF/OTF ed esportatori `.3MF` e `.STL`
 - `avvia.bat` — Script di avvio automatico con `uv`
 - `pyproject.toml` / `uv.lock` — Dipendenze e lockfile riproducibile
-- `modelli/` — Modelli 3D di riferimento (`San_P_0`, `San_P_1`, `San_P_2` in `.3mf` e `.stl`)
+- `modelli/` — Modelli 3D di riferimento in formato STEP (`Targhetta Pill.step`, `Targhetta rectangular.step`, `Targhetta round.step`)
 - `screenshot.png` — Anteprima dell'interfaccia dell'applicazione

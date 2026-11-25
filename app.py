@@ -87,9 +87,9 @@ def _set_windows_titlebar_dark(window: tk.Tk, dark: bool) -> None:
 class TagApp(tk.Tk):
     def __init__(self) -> None:
         super().__init__()
-        self.title("3D Fast Label v1.0 beta")
-        self.geometry("1220x830")
-        self.minsize(1040, 720)
+        self.title("3D Fast Label v1.1 beta")
+        self.geometry("1220x860")
+        self.minsize(1040, 750)
 
         self.current_theme = _detect_windows_theme()
         self.fonts = tg.discover_system_fonts()
@@ -115,11 +115,12 @@ class TagApp(tk.Tk):
         self.var_model_name = tk.StringVar(value=init_spec.display_name)
         self.var_relief_mode = tk.StringVar(value=init_spec.default_relief_mode)
         self.var_align = tk.StringVar(value="center")
-        self.var_include_border = tk.BooleanVar(value=True)
+        self.var_include_border = tk.BooleanVar(value=init_spec.default_include_border)
         self.var_font_name = tk.StringVar(value=default_font.display_name if default_font else "")
         self.var_wrap_mode = tk.StringVar(value="auto")
         self.var_width = tk.DoubleVar(value=init_spec.default_width_mm)
         self.var_height = tk.DoubleVar(value=init_spec.default_height_mm)
+        self.var_thickness = tk.DoubleVar(value=init_spec.default_thickness_mm)
         self.var_margin = tk.DoubleVar(value=tg.DEFAULT_MARGIN_MM)
         self.var_show_usable = tk.BooleanVar(value=True)
         self.var_status = tk.StringVar(value="Pronto")
@@ -164,7 +165,7 @@ class TagApp(tk.Tk):
         ).pack(side="left")
         self.lbl_subtitle = ttk.Label(
             title_box,
-            text="  |  v1.0 beta  •  Stampa multi-colore .3MF e .STL",
+            text="  |  v1.1 beta  •  Stampa multi-colore .3MF e .STL",
             font=("Segoe UI", 9),
         )
         self.lbl_subtitle.pack(side="left", pady=(3, 0))
@@ -338,9 +339,9 @@ class TagApp(tk.Tk):
     def _build_model_selector(self, parent: ttk.LabelFrame) -> None:
         parent.rowconfigure(0, weight=1)
         sample_texts = {
-            "san_p_0": ("Line 1", "center"),
-            "san_p_1": ("Line 1\nLine 2\nLine 3", "left"),
-            "san_p_2": ("Line 1", "center"),
+            "pill": ("Line 1", "center"),
+            "rectangular": ("Line 1\nLine 2\nLine 3", "left"),
+            "round": ("Line 1", "center"),
         }
         fpath, fnum = self._active_font()
 
@@ -354,10 +355,11 @@ class TagApp(tk.Tk):
                 margin_mm=tg.DEFAULT_MARGIN_MM,
                 width_mm=spec.default_width_mm,
                 height_mm=spec.default_height_mm,
+                thickness_mm=spec.default_thickness_mm,
                 model_id=spec.model_id,
                 relief_mode=spec.default_relief_mode,
                 align=sample_align,
-                include_border=spec.supports_border,
+                include_border=spec.default_include_border,
             )
             png_bytes = tg.render_thumbnail_png(
                 lay,
@@ -459,14 +461,14 @@ class TagApp(tk.Tk):
         rel_frame.grid(row=0, column=1, columnspan=2, sticky="w", padx=(8, 0), pady=3)
         ttk.Radiobutton(
             rel_frame,
-            text="A filo (0.4–1.0 mm, face-down)",
+            text="A filo (0.6 mm, face-down)",
             variable=self.var_relief_mode,
             value="flush",
             command=self._schedule_preview,
         ).pack(side="left", padx=(0, 10))
         ttk.Radiobutton(
             rel_frame,
-            text="In rilievo (1.0–1.6 mm)",
+            text="In rilievo (+0.6 mm)",
             variable=self.var_relief_mode,
             value="raised",
             command=self._schedule_preview,
@@ -513,7 +515,7 @@ class TagApp(tk.Tk):
 
         ttk.Button(col_frame, text="Ripristina", command=self._reset_colors).pack(side="left")
 
-        # Dimensioni dinamiche per modello (V/O oppure Diametro singolo per San_P_2)
+        # Dimensioni dinamiche per modello (V/O oppure Diametro singolo per Circolare)
         self.lbl_dims = ttk.Label(parent, text="Dimensioni (mm):")
         self.lbl_dims.grid(row=3, column=0, sticky="w", pady=3)
 
@@ -598,10 +600,41 @@ class TagApp(tk.Tk):
         self.btn_reset_diam.grid(row=0, column=3)
         self.dim_frame_1d.grid_remove()
 
+        # Spessore base dinamico per modello (±0.6 mm, passo 0.2 mm)
+        ttk.Label(parent, text="Spessore (mm):").grid(row=4, column=0, sticky="w", pady=3)
+        th_frame = ttk.Frame(parent)
+        th_frame.grid(row=4, column=1, columnspan=2, sticky="ew", padx=(8, 0), pady=3)
+        th_frame.columnconfigure(0, weight=1)
+
+        self.sc_thickness = ttk.Scale(
+            th_frame,
+            from_=1.2,
+            to=2.4,
+            variable=self.var_thickness,
+            command=lambda _v: self._on_thickness_slider(),
+        )
+        self.sc_thickness.grid(row=0, column=0, sticky="ew", padx=(0, 6))
+        self.sp_thickness = ttk.Spinbox(
+            th_frame,
+            from_=1.2,
+            to=2.4,
+            increment=tg.THICKNESS_STEP_MM,
+            textvariable=self.var_thickness,
+            width=5,
+            command=self._schedule_preview,
+        )
+        self.sp_thickness.grid(row=0, column=1, padx=(0, 6))
+        self.sp_thickness.bind("<KeyRelease>", lambda _e: self._schedule_preview())
+        self.sp_thickness.bind("<FocusOut>", lambda _e: self._clamp_thickness())
+        self.btn_reset_thickness = ttk.Button(
+            th_frame, text="1.8 mm", width=6, command=self._reset_thickness
+        )
+        self.btn_reset_thickness.grid(row=0, column=2)
+
         # Margine
-        ttk.Label(parent, text="Margine (mm):").grid(row=4, column=0, sticky="w", pady=3)
+        ttk.Label(parent, text="Margine (mm):").grid(row=5, column=0, sticky="w", pady=3)
         m_frame = ttk.Frame(parent)
-        m_frame.grid(row=4, column=1, columnspan=2, sticky="ew", padx=(8, 0), pady=3)
+        m_frame.grid(row=5, column=1, columnspan=2, sticky="ew", padx=(8, 0), pady=3)
         m_frame.columnconfigure(0, weight=1)
 
         scale = ttk.Scale(
@@ -626,6 +659,7 @@ class TagApp(tk.Tk):
         reset_dims: bool = True,
         reset_colors: bool = False,
         reset_relief: bool = True,
+        reset_thickness: bool = True,
     ) -> None:
         spec = self._active_spec()
         if spec.single_dimension:
@@ -645,6 +679,10 @@ class TagApp(tk.Tk):
             self.sp_width.configure(from_=spec.min_width_mm, to=spec.max_width_mm)
             self.btn_reset_dims.configure(text=f"{int(spec.default_height_mm)}x{int(spec.default_width_mm)}")
 
+        self.sc_thickness.configure(from_=spec.min_thickness_mm, to=spec.max_thickness_mm)
+        self.sp_thickness.configure(from_=spec.min_thickness_mm, to=spec.max_thickness_mm)
+        self.btn_reset_thickness.configure(text=f"{spec.default_thickness_mm:.1f} mm")
+
         if spec.supports_border:
             self.chk_border.pack(side="left", padx=(10, 0))
         else:
@@ -653,6 +691,8 @@ class TagApp(tk.Tk):
         if reset_dims:
             self.var_width.set(spec.default_width_mm)
             self.var_height.set(spec.default_height_mm)
+        if reset_thickness:
+            self.var_thickness.set(spec.default_thickness_mm)
         if reset_relief:
             self.var_relief_mode.set(spec.default_relief_mode)
         if reset_colors or not self._colors_customized:
@@ -664,11 +704,16 @@ class TagApp(tk.Tk):
         cur_txt = self.txt_single.get("1.0", "end-1c").strip()
         sample_defaults = {"Line 1", "Line 1\nLine 2\nLine 3", ""}
         if cur_txt in sample_defaults:
-            next_sample = "Line 1\nLine 2\nLine 3" if spec.model_id == "san_p_1" else "Line 1"
+            next_sample = "Line 1\nLine 2\nLine 3" if spec.model_id == "rectangular" else "Line 1"
             self.txt_single.delete("1.0", "end")
             self.txt_single.insert("1.0", next_sample)
 
-        self._sync_model_constraints(reset_dims=True, reset_colors=False, reset_relief=True)
+        self._sync_model_constraints(
+            reset_dims=True,
+            reset_colors=False,
+            reset_relief=True,
+            reset_thickness=True,
+        )
         self._schedule_preview()
 
     def _active_font(self) -> tuple[str, int]:
@@ -771,6 +816,33 @@ class TagApp(tk.Tk):
         self.var_height.set(spec.default_height_mm)
         self._schedule_preview()
 
+    def _get_thickness(self, snap_step: bool = False) -> float:
+        spec = self._active_spec()
+        try:
+            t = float(self.var_thickness.get())
+        except (tk.TclError, ValueError):
+            t = spec.default_thickness_mm
+        if snap_step:
+            step = tg.THICKNESS_STEP_MM
+            t = round(t / step) * step
+        t = round(max(spec.min_thickness_mm, min(spec.max_thickness_mm, t)), 1)
+        return t
+
+    def _on_thickness_slider(self) -> None:
+        t = self._get_thickness(snap_step=True)
+        self.var_thickness.set(t)
+        self._schedule_preview()
+
+    def _clamp_thickness(self) -> None:
+        t = self._get_thickness(snap_step=False)
+        self.var_thickness.set(t)
+        self._schedule_preview()
+
+    def _reset_thickness(self) -> None:
+        spec = self._active_spec()
+        self.var_thickness.set(spec.default_thickness_mm)
+        self._schedule_preview()
+
     def _on_margin_changed(self) -> None:
         val = round(self.var_margin.get(), 1)
         self.lbl_margin_val.configure(text=f"{val:.1f} mm")
@@ -789,6 +861,7 @@ class TagApp(tk.Tk):
             fpath, fnum = self._active_font()
             margin = round(float(self.var_margin.get()), 2)
             width_mm, height_mm = self._get_dimensions()
+            thickness_mm = self._get_thickness()
             relief_mode = self.var_relief_mode.get()
             align = self.var_align.get()
             layout = tg.compute_tag_layout(
@@ -799,16 +872,26 @@ class TagApp(tk.Tk):
                 wrap_mode=self.var_wrap_mode.get(),
                 width_mm=width_mm,
                 height_mm=height_mm,
+                thickness_mm=thickness_mm,
                 model_id=spec.model_id,
                 relief_mode=relief_mode,
                 align=align,
                 include_border=self.var_include_border.get(),
             )
             self.current_layout = layout
-            relief_desc = "a filo 0.6 mm (face-down)" if relief_mode == "flush" else "in rilievo +0.6 mm (totale 1.6 mm)"
-            dim_desc = f"Ø {layout.width_mm:.1f} mm" if spec.single_dimension else f"{layout.height_mm:.1f} × {layout.width_mm:.1f} mm"
+            t_base = layout.thickness_mm
+            if relief_mode == "flush":
+                relief_desc = f"a filo {tg.TEXT_THICKNESS:.1f} mm (face-down)"
+            else:
+                total_h = t_base + tg.TEXT_THICKNESS
+                relief_desc = f"in rilievo +{tg.TEXT_THICKNESS:.1f} mm (totale {total_h:.1f} mm)"
+            dim_desc = (
+                f"Ø {layout.width_mm:.1f} mm"
+                if spec.single_dimension
+                else f"{layout.height_mm:.1f} × {layout.width_mm:.1f} mm"
+            )
             self.var_specs.set(
-                f"Dimensioni: {dim_desc} | Base: 1.0 mm | Testo {relief_desc}"
+                f"Dimensioni: {dim_desc} | Base: {t_base:.1f} mm (smusso {layout.chamfer_mm:.1f} mm) | Testo {relief_desc}"
             )
             if layout.lines:
                 self.var_metrics.set(
@@ -1002,6 +1085,7 @@ class TagApp(tk.Tk):
         spec = self._active_spec()
         margin = round(float(self.var_margin.get()), 2)
         width_mm, height_mm = self._get_dimensions()
+        thickness_mm = self._get_thickness()
         wrap_mode = self.var_wrap_mode.get()
         relief_mode = self.var_relief_mode.get()
         align = self.var_align.get()
@@ -1034,6 +1118,7 @@ class TagApp(tk.Tk):
                         wrap_mode=wrap_mode,
                         width_mm=width_mm,
                         height_mm=height_mm,
+                        thickness_mm=thickness_mm,
                         model_id=spec.model_id,
                         relief_mode=relief_mode,
                         align=align,
